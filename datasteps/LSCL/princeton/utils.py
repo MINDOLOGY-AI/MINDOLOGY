@@ -24,7 +24,16 @@ def download(url, dest):
 
 def write_facts(path, rows):
     # rows: [{"id": str, "question": str, "answer": str, "aliases": [str], "subject": str | None, "relation": str, "meta": dict}]
+    # a question that appears with more than one distinct answer (popqa: two genres for the same title, lama: N-M relations)
+    # can never be exact-matched at 100%, so every row of such a question is dropped before writing.
     assert len(rows) > 0
+    answers = {}  # {question: {answer}}
+    for r in rows:
+        answers.setdefault(r["question"], set()).add(r["answer"])
+    conflicting = {q for q, a in answers.items() if len(a) > 1}  # {question}
+    dropped = sum(r["question"] in conflicting for r in rows)
+    rows = [r for r in rows if r["question"] not in conflicting]
+    print(f"  dropped {dropped:,} rows of {len(conflicting):,} questions with conflicting answers")
     ids = set()  # {str}
     for r in rows:
         assert set(r) == FACT_KEYS, f"{r['id'] if 'id' in r else r}: keys {set(r)} != {FACT_KEYS}"

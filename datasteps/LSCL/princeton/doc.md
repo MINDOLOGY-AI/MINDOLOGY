@@ -23,7 +23,8 @@ raw/                            the downloaded tsv / zips / parquet
 
 # fact schema
 
-one json object per line:
+one json object per line. questions that appear with more than one distinct answer are dropped at write time (they can never
+be exact-matched at 100%): popqa 2,022 rows, lama 3,578, entityquestions 66, triviaqa and kvr none.
 ```
 {
   "id": "popqa_4222362",            # "<source>_<source id>", unique within the file
