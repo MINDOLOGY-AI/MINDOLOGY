@@ -32,7 +32,7 @@ per unit:
 - **random = 20** — 40 `(chunk, position)` drawn once per run, same for every unit, windows captured for every unit. at save time, per unit, drop any random colliding with any of its 40 picks, keep the first 20.  
 - **quantiles** — per batch, sort the batch's tokens per unit, read exact values at integer percentiles 0..100, token-weighted running average across batches (unbiased since chunks are shuffled). p100 is the mean of batch maxima, not the global max (that is top-k pick 0). for eyeballing only, never sent to the labeler.  
 
-output under `weights/evoke/<model>/<run_name>/` (a unit with too few valid picks has `chunk_id = -1` in the empty slots):  
+output under `results/<model>/<run_name>/` (a unit with too few valid picks has `chunk_id = -1` in the empty slots):  
 - `meta.json` — `{n_chunks, n_tokens, context_chunk_size, source_dataset, window_before, window_after, top_k, iw_k, n_random, n_quantiles, hooks: {name: D}}`  
 - `<hook>.pick_chunk.bin` / `.pick_pos.bin` — `(D, 40) int32 / int8` — slots 0..19 top-k strongest first, 20..39 iw by key  
 - `<hook>.windows.bin` — `(D, 40, 21) fp16` — window per pick; `[:, :, 10]` is the firing token's own activation  

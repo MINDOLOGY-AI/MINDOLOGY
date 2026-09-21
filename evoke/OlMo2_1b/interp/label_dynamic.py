@@ -7,7 +7,7 @@ from pathlib import Path
 from evoke.OlMo2_1b.run.loader import load_olmo2_tokenizer
 from synapse.interp.label import label_units
 
-PICKS_DIR = Path.cwd() / "weights" / "evoke" / "OlMo2_1b" / "mlp_dynamic"
+PICKS_DIR = Path.cwd() / "results" / "OlMo2_1b" / "mlp_dynamic"
 MODEL = "deepseek/deepseek-v4.1-flash"
 HOOK_NAMES = [f"post_gate.{i}" for i in range(16)]
 WORKERS = 200  # concurrent units; lower if openrouter starts returning 429s
