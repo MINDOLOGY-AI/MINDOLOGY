@@ -3,6 +3,7 @@
 # not a script: experiment.py calls run_stage() for stage 1, then once per stage-2 variant.
 
 import json
+import math
 from pathlib import Path
 
 import torch
@@ -24,6 +25,22 @@ BATCH_SIZE = 32
 MAX_EPOCHS = 50
 # epochs to keep training after the first epoch at 100%
 EXTRA_EPOCHS = 0
+# lr schedule: linear warmup for WARMUP_FRAC of the decay horizon, cosine from LR down to LR * LR_FLOOR over SCHED_EPOCHS,
+# then held at the floor until MAX_EPOCHS. a constant lr leaves the last ~2% of facts flipping in and out between epochs
+WARMUP_FRAC = 0.05
+SCHED_EPOCHS = 20
+LR_FLOOR = 0.1
+
+
+def lr_factor(step, batches_per_epoch):
+    # multiplier on LR at optimizer step `step`
+    horizon = SCHED_EPOCHS * batches_per_epoch
+    warmup = int(WARMUP_FRAC * horizon)
+    if step < warmup:
+        return (step + 1) / warmup
+    if step >= horizon:
+        return LR_FLOOR
+    return LR_FLOOR + (1 - LR_FLOOR) * 0.5 * (1 + math.cos(math.pi * (step - warmup) / (horizon - warmup)))
 
 
 class SFTModel(nn.Module):
@@ -65,6 +82,7 @@ def run_stage(run, train_split, eval_splits, init="instruct", replay=None, repla
     batches_per_epoch = len(dataset) // BATCH_SIZE
     assert batches_per_epoch > 0, f"{len(dataset)} rows < batch size {BATCH_SIZE}"
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, betas=(0.9, 0.95), weight_decay=0.0)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: lr_factor(step, batches_per_epoch))
 
     # per-epoch accuracy on the facts being trained. stop after the first 100% plus EXTRA_EPOCHS more at 100%
     state = {"epochs": 0, "epochs_at_100": 0, "first_100_epoch": None}  # {str: int | None}
@@ -81,7 +99,7 @@ def run_stage(run, train_split, eval_splits, init="instruct", replay=None, repla
         return {f"acc_{train_split}": acc}, state["epochs_at_100"] > EXTRA_EPOCHS
 
     batches = train(
-        model, dataset, BATCH_SIZE, optimizer, str(WEIGHTS_DIR / run), MAX_EPOCHS * batches_per_epoch,
+        model, dataset, BATCH_SIZE, optimizer, str(WEIGHTS_DIR / run), MAX_EPOCHS * batches_per_epoch, scheduler=scheduler,
         batches_per_log=10, batches_per_save=batches_per_epoch, batches_per_eval=batches_per_epoch, eval_fn=eval_fn,
     )
     reached_100 = state["first_100_epoch"] is not None
@@ -96,7 +114,7 @@ def run_stage(run, train_split, eval_splits, init="instruct", replay=None, repla
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     result = {
         "run": run, "init": init, "train_split": train_split, "replay": replay, "replay_ratio": replay_ratio,
-        "lr": LR, "batch_size": BATCH_SIZE, "batches": batches, "epochs": state["epochs"],
+        "lr": LR, "schedule": f"warmup{WARMUP_FRAC}_cosine{SCHED_EPOCHS}ep_floor{LR_FLOOR}", "batch_size": BATCH_SIZE, "batches": batches, "epochs": state["epochs"],
         "first_100_epoch": state["first_100_epoch"], "reached_100": reached_100, "acc": acc,
     }
     (RESULTS_DIR / f"{run}.json").write_text(json.dumps(result, indent=2))

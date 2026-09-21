@@ -161,7 +161,9 @@ a method is a new stage 2 variant in experiment.py (a change to SFTModel.compute
 
 1. load the instruct model in fp32 (or the init run's final.pt), wrap it in a module whose compute_loss(batch) returns the
    lm loss on the batch dict. forward runs under bf16 autocast, params and adam states stay fp32 (a 1b is ~16 GB, fits the 5090).
-2. SFTDataset from the train split (+ the replay pool behind it, wrapped in ReplayDataset when replay is set). AdamW (0.9, 0.95), wd 0, clip 1.0, lr 5e-5, batch 32, no scheduler.
+2. SFTDataset from the train split (+ the replay pool behind it, wrapped in ReplayDataset when replay is set). AdamW (0.9, 0.95), wd 0, clip 1.0, lr 5e-5, batch 32,
+   warmup 5% then cosine to a 10% floor over 20 epochs, floor held to the cap (a constant lr left the last ~2% of A flipping
+   between epochs at 98% for 5+ epochs).
 3. train() with eval_fn = accuracy on the train split, every epoch. stop at the first epoch that hits 100% plus EXTRA_EPOCHS
    more (0). cap MAX_EPOCHS (50, an epoch is one pass over B whatever the replay ratio): if 100 is never reached the run is
    written with reached_100 = false and the method failed (rules 2 / 3).
