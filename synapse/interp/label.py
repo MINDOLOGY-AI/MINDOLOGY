@@ -17,7 +17,8 @@ SEED = 0
 
 
 async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
-    # workers: max api calls in flight at once
+    # workers: max units in flight at once (a unit holds its slot across both of its calls, otherwise the
+    # fifo semaphore would queue every second call behind all 131k first calls and nothing completes for ages)
     picks_dir = Path(picks_dir)
     meta = json.loads((picks_dir / "meta.json").read_text())
     n_chunks, L = meta["n_chunks"], meta["context_chunk_size"]
@@ -50,7 +51,7 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
         out_path = picks_dir / f"{name}.labels.jsonl"
         done = {json.loads(line)["unit"] for line in out_path.read_text().splitlines()} if out_path.exists() else set()  # {int}
         todo += [(name, u) for u in range(d) if u not in done]
-        print(f"{name}: {d - len(done)} units to label ({len(done)} already done)")
+        print(f"{name}: {d - len(done)} units to label ({len(done)} already done)", flush=True)
 
     sem = asyncio.Semaphore(workers)
 
@@ -61,6 +62,12 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
         if pick_chunk[u, 0] < 0 or unit_max <= 0:
             return name, {"unit": u, "label": None, "score": None, "reason": "no positive activation"}
         rng = np.random.default_rng(SEED + u)
+        async with sem:
+            return name, await _label_unit(name, u, unit_max, rng)
+
+    async def _label_unit(name, u, unit_max, rng):
+        h = data[name]
+        pick_chunk, pick_pos, windows = h["pick_chunk"], h["pick_pos"], h["windows"]
 
         def text(c, p, win, marked):
             strs = [vocab[i] for i in tokens[c, p - wb:p + wa + 1]]
@@ -70,9 +77,8 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
         # label prompt: valid label slots, strongest first (slots are already ordered within top-k / iw)
         lab = [s for s in label_slots if pick_chunk[u, s] >= 0]
         lab.sort(key=lambda s: -windows[u, s, wb])
-        async with sem:
-            raw_label = await chat(generate_messages([text(pick_chunk[u, s], pick_pos[u, s], windows[u, s], True) for s in lab]),
-                                   model, GENERATE_MAX_TOKENS)
+        raw_label = await chat(generate_messages([text(pick_chunk[u, s], pick_pos[u, s], windows[u, s], True) for s in lab]),
+                               model, GENERATE_MAX_TOKENS)
         label = raw_label.split("activates on")[-1].rstrip(".").strip()
 
         # test set: held-out picks (fire by construction) + random windows (fire iff any token > p99)
@@ -82,8 +88,7 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
         rng.shuffle(items)
         rendered = [text(pick_chunk[u, s], pick_pos[u, s], None, False) if kind == "pick"
                     else text(h["rand_chunk"][u, s], h["rand_pos"][u, s], None, False) for (kind, s), _ in items]
-        async with sem:
-            raw_test = await chat(score_messages(label, rendered), model, 2 * len(items) + 5)
+        raw_test = await chat(score_messages(label, rendered), model, 2 * len(items) + 5)
         said = parse_score_answer(raw_test, len(items))
         truth = [t for _, t in items]
         if said is None:
@@ -93,7 +98,7 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
             neg = [not s for s, t in zip(said, truth) if not t]
             rates = [np.mean(x) for x in (pos, neg) if x]  # balanced accuracy over the classes present
             score = float(np.mean(rates))
-        return name, {"unit": u, "label": label, "score": score,
+        return {"unit": u, "label": label, "score": score,
                 "test": {"order": [list(k) for k, _ in items], "truth": truth, "said": said},
                 "raw": {"label": raw_label, "test": raw_test}}
 
@@ -105,6 +110,6 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
         files[name].write(json.dumps(rec, ensure_ascii=False) + "\n")
         files[name].flush()
         if i % 500 == 0 or i == len(tasks):
-            print(f"  {i}/{len(tasks)} units done")
+            print(f"  {i}/{len(tasks)} units done", flush=True)
     for f in files.values():
         f.close()

@@ -38,17 +38,20 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
         try:
             r = await _client.post(URL, json=body)
         except httpx.TransportError as e:  # network hiccup / timeout: retry
-            print(f"  openrouter transport error ({e}), retry {attempt + 1}/{MAX_RETRIES}")
+            print(f"  openrouter transport error ({e}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
             await asyncio.sleep(2 ** attempt)
             continue
         if r.status_code in RETRY_STATUS:
-            print(f"  openrouter {r.status_code}, retry {attempt + 1}/{MAX_RETRIES}")
+            print(f"  openrouter {r.status_code}, retry {attempt + 1}/{MAX_RETRIES}", flush=True)
             await asyncio.sleep(2 ** attempt)
             continue
         assert r.status_code == 200, f"openrouter {r.status_code}: {r.text[:500]}"
         data = r.json()
         assert "choices" in data, f"openrouter response without choices: {str(data)[:500]}"
         content = data["choices"][0]["message"]["content"]
-        assert content, f"openrouter returned empty content: {str(data)[:500]}"
+        if not content:  # provider flake (seen ~1 in 50): retry like a 5xx
+            print(f"  openrouter empty content (finish={data['choices'][0].get('finish_reason')}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
+            await asyncio.sleep(2 ** attempt)
+            continue
         return content
     raise RuntimeError(f"openrouter: gave up after {MAX_RETRIES} retries")
