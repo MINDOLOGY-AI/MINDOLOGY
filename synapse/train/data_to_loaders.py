@@ -120,3 +120,34 @@ class SFTDataset(Dataset):
 
     def __getitem__(self, idx: int):
         return {"input_ids": self.input_ids[idx], "attention_mask": self.attention_mask[idx], "labels": self.labels[idx]}
+
+
+class ReplayDataset(Dataset):
+    # epoch-wise replay: rows [0, n_main) of `dataset` are the main set and are always included; rows [n_main, len) are the
+    # replay pool, of which a fresh ratio * n_main subset is drawn every epoch from (seed, epoch). train() calls set_epoch
+    # before building each epoch's loader, so the draw is deterministic and resume-safe. every row must have the same shape,
+    # so build main and pool into one dataset (e.g. one SFTDataset over both) before wrapping.
+    def __init__(self, dataset: Dataset, n_main: int, ratio: float, seed: int = 0):
+        n_pool = len(dataset) - n_main
+        self.n_replay = int(round(ratio * n_main))
+        assert 0 < n_main < len(dataset), f"n_main {n_main} must leave a non-empty pool in {len(dataset)} rows"
+        assert 0 <= self.n_replay <= n_pool, f"ratio {ratio} asks for {self.n_replay} replay rows, pool has {n_pool}"
+        self.dataset = dataset
+        self.n_main = n_main
+        self.n_pool = n_pool
+        self.seed = seed
+        # [pool row offsets drawn for the current epoch], length n_replay
+        self.chosen = []
+        self.set_epoch(0)
+
+    def set_epoch(self, epoch: int) -> None:
+        g = torch.Generator().manual_seed(self.seed + epoch)
+        self.chosen = torch.randperm(self.n_pool, generator=g)[: self.n_replay].tolist()
+
+    def __len__(self) -> int:
+        return self.n_main + self.n_replay
+
+    def __getitem__(self, idx: int):
+        if idx < self.n_main:
+            return self.dataset[idx]
+        return self.dataset[self.n_main + self.chosen[idx - self.n_main]]

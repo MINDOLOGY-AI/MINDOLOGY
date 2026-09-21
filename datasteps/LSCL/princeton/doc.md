@@ -14,7 +14,6 @@ or one at a time: `python -m datasteps.LSCL.princeton.popqa` etc. downloads are 
 output: `data/datasteps/LSCL/princeton/`
 ```
 kvr.jsonl               4,000   synthetic, no download
-random_words.jsonl      8,000   REMIX mixing data, from /usr/share/dict/words, no download
 popqa.jsonl            14,267   hf akariasai/PopQA test.tsv (via hf-mirror, plain http)
 triviaqa.jsonl         86,481   hf mandarjoshi/trivia_qa rc.nocontext train+validation parquet (via hf-mirror), deduped per question_id, 2 conflicting ids dropped
 lama.jsonl             34,039   T-REx from dl.fbaipublicfiles.com/LAMA/data.zip, 41 relations
@@ -22,7 +21,7 @@ entityquestions.jsonl  22,075   nlp.cs.princeton.edu entity-questions dataset.zi
 raw/                            the downloaded tsv / zips / parquet
 ```
 
-# fact schema (all files except random_words)
+# fact schema
 
 one json object per line:
 ```
@@ -42,8 +41,6 @@ one json object per line:
 - triviaqa: `split, answer_type`
 - lama: `relation_label, template, sub_uri, obj_uri`. question is the cloze template with `[X]` filled and `[Y]` -> `___`. 5,275 rows have the blank mid-sentence (e.g. "[X] plays [Y] music .")
 - entityquestions: `split`
-
-random_words.jsonl: `{"id": "rws_0", "text": "50 space separated words"}`
 
 these are the unfiltered, model-agnostic pools. the per-model "does the base model already know it" filter and the
 train-time prompt format are in the plan at the bottom, not here.

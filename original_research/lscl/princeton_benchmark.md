@@ -15,7 +15,6 @@ all fact files share one schema: question -> answer (+ aliases). one fact per ro
 | triviaqa | 86,481 | human-written trivia questions with wikipedia alias lists. train 76,523 + validation 9,958, deduped per question_id | stage 1 |
 | lama | 34,039 | T-REx cloze probes, 41 wikidata relations, ~1000 each. question = template with subject filled and object blanked: `Raj Kapoor is a ___ by profession .` -> `actor`. one alias only | stage 2 factoid |
 | entityquestions | 22,075 | templated questions over 24 wikidata relations, 1000 each, entity-centric long tail: `Who owns PopCap Games?` -> `Electronic Arts` | stage 2 factoid |
-| random_words | 8,000 | 50 uniformly sampled dictionary words per row. not facts. REMIX mixing data | mixing |
 
 not included here: WebQA (stage 2 factoid) and the non-factoid stage 2 sets (UltraChat, EvolCode, APPS, GSM8K, MATH).
 
@@ -46,10 +45,10 @@ hard. break one and the run is not this benchmark.
 free: optimizer, lr, batch, schedule, stop rule (as long as 2 and 3 hold), prompt template, model, what is mixed in, which (A, B) pair.
 always report next to the score: B accuracy, and the number of steps stage 1 and stage 2 took (a method that needs 3x the steps on B has 3x the forgetting pressure, "train to convergence" hides that).
 
-# REMIX (their fix)
+# REMIX (their fix, not implemented here)
 
 replace D with D ∪ D_M at ratio 1:2 (4000 mixing rows for 2000 facts), in stage 1, stage 2, or both. D_M is either
-- random_words.jsonl rows, or
+- 50-word random dictionary-word sequences, or
 - generic pretraining passages (knowledge pile, arxiv pile, fineweb) as user `Complete the following partial passage:\n\n<first 50 words>`, assistant `<next 50 words>`.
 
 baselines: replay (0 / 1 / 5 / 10 % of D_A mixed into stage 2), EWC, KL to the frozen model, LoRA.
@@ -98,7 +97,7 @@ evoke/OlMo2_1b/lscl/filter_unknown.py  step 1  what does the model know  -> data
 evoke/OlMo2_1b/lscl/make_splits.py     step 2  cut A / B / heldout        -> data/lscl/olmo2_1b/splits/<name>_{A,B,heldout}.jsonl
 evoke/OlMo2_1b/lscl/eval_facts.py      accuracy(model, tokenizer, facts), the official match rule
 evoke/OlMo2_1b/lscl/run_stage.py       one training stage + evals        -> weights/lscl/olmo2_1b/<run>/, results/lscl/<run>.json
-synapse/train/data_to_loaders.py       SFTDataset: (prompt, answer) rows -> padded input_ids / attention_mask / labels
+synapse/train/data_to_loaders.py       SFTDataset: (prompt, answer) rows -> padded input_ids / attention_mask / labels; ReplayDataset: per-epoch redraw of a replay pool
 synapse/train/train.py                 the loop (accumulation, clip, autocast, resume, eval_fn stop hook)
 ```
 
@@ -129,13 +128,9 @@ prompt and answer are tokenized separately and concatenated, because that is exa
 (prompt tokens, then the model produces answer tokens). -100 is cross_entropy's ignore_index: those positions get no loss and
 no gradient. the boundaries live in the tensors themselves (first label != -100, first mask == 0), no offsets are stored anywhere.
 
-REMIX mixing rows are just more (prompt, answer) pairs appended before SFTDataset: random_words row -> prompt with
-question = "Continue: <first 25 words>", answer = <last 25 words>. ratio 2.0 = 4000 mixing rows for 2000 facts.
-
 results row (`results/lscl/<run>.json`), one per stage run:
 ```
-{"run": "popqa_A_naive", "init": "instruct" | "<previous run>", "train_split": "popqa_A", "mix": null | "random_words",
- "mix_ratio": 0.0, "lr": 5e-5, "batch_size": 32, "batches": 630, "epochs": 10, "reached_100": true,
+{"run": "popqa_A_naive", "init": "instruct" | "<previous run>", "train_split": "popqa_A", "replay": null | "popqa_A", "replay_ratio": 0.0, "lr": 5e-5, "batch_size": 32, "batches": 630, "epochs": 10, "reached_100": true,
  "acc": {"popqa_A": 1.0, "popqa_heldout": 0.0, ...}}      # every --eval split, after this stage
 ```
 
@@ -150,13 +145,20 @@ python -m evoke.OlMo2_1b.lscl.make_splits lama
 python -m evoke.OlMo2_1b.lscl.run_stage --run popqa_A_naive --train popqa_A --eval popqa_A lama_B popqa_heldout
 python -m evoke.OlMo2_1b.lscl.run_stage --run popqa_A_naive__lama_B --init popqa_A_naive --train lama_B --eval popqa_A lama_B popqa_heldout
 ```
-retention = `acc.popqa_A` in the second results file. REMIX = the same two commands with `--mix random_words --mix_ratio 2`.
+retention = `acc.popqa_A` in the second results file.
+
+the two reference lines every method is judged against:
+- floor: naive, the commands above.
+- ceiling: rehearsal, stage 2 with `--replay popqa_A --replay_ratio 1`. every epoch of stage 2 trains on all of B plus a fresh
+  random ratio x |B| rows of A (ratio 1 = all of A). A rows are re-drawn each epoch from (seed, epoch), so exposure is uniform
+  over A and the draw is deterministic on resume. it is not a method (rule 4), it is what "no forgetting" looks like.
+  the ratio sweep 0..1 is a curve of retention vs re-exposure; since epochs vary per run, plot against ratio x epochs too.
 
 ## what run_stage does
 
 1. load the instruct model in fp32 (or `--init <run>`'s final weights), wrap it in a module whose compute_loss(batch) returns the
    lm loss on the batch dict. forward runs under bf16 autocast, params and adam states stay fp32 (a 1b is ~16 GB, fits the 5090).
-2. SFTDataset from the train split (+ mixing rows). AdamW (0.9, 0.95), wd 0, clip 1.0, lr 5e-5, batch 32, no scheduler.
+2. SFTDataset from the train split (+ the replay pool behind it, wrapped in ReplayDataset when --replay is set). AdamW (0.9, 0.95), wd 0, clip 1.0, lr 5e-5, batch 32, no scheduler.
 3. train() with eval_fn = accuracy on the train split, every epoch. stop at the first epoch that hits 100% plus `--extra_epochs`
    more (default 0). cap `--max_epochs` 20: if 100 is never reached the run is written with reached_100 = false and the
    method failed (rules 2 / 3).

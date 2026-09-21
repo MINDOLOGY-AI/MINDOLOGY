@@ -51,8 +51,11 @@ def train(
     if eval_dataset is not None:
         eval_iter = iter(dataset_to_dataloader(eval_dataset, eval_batch_size or batch_size, cur_epoch=0, num_workers=num_workers))
 
-    # resume mid-epoch: the loader for the current epoch is reseeded and fast-skipped to the right batch
+    # resume mid-epoch: the loader for the current epoch is reseeded and fast-skipped to the right batch.
+    # datasets that change per epoch (ReplayDataset) get told the epoch before their loader is built
     epoch = batch_idx // batches_per_epoch
+    if hasattr(dataset, "set_epoch"):
+        dataset.set_epoch(epoch)
     data_iter = iter(dataset_to_dataloader(dataset, batch_size, cur_epoch=epoch, start_batch=batch_idx % batches_per_epoch, num_workers=num_workers))
 
     while batch_idx < max_batches:
@@ -66,6 +69,8 @@ def train(
                 batch = next(data_iter)
             except StopIteration:
                 epoch += 1
+                if hasattr(dataset, "set_epoch"):
+                    dataset.set_epoch(epoch)
                 data_iter = iter(dataset_to_dataloader(dataset, batch_size, cur_epoch=epoch, num_workers=num_workers))
                 batch = next(data_iter)
             with autocast:
