@@ -170,6 +170,33 @@ a method is a new stage 2 variant in experiment.py (a change to SFTModel.compute
 4. after stopping: accuracy on every EVAL split with the official rule (greedy to eos, `.strip().lower() ==` the answer),
    save `weights/lscl/olmo2_1b/<run>/final.pt` (model state dict only), write the results row.
 
+## results, 2026-09-21, run 1 (raw jsons in results/lscl/, gitignored)
+
+A = popqa_A (2000 unknown popqa facts), B = lama_B (2000 unknown lama facts), olmo2-1b-instruct, lr 5e-5 cosine, batch 32.
+zero-shot before anything: popqa 10.9% known, lama 24.4% known (those facts were excluded).
+stage 1: 100% on A after 19 epochs. B before stage 2: 4.7% (the stage 1 model on unseen lama).
+
+| replay ratio | epochs to 100% B | ratio x epochs | retention on A | B | popqa heldout |
+|---|---|---|---|---|---|
+| 0 (naive, floor) | 16 | 0 | 53.9% | 100% | 0.0% |
+| 0.05 | 13 | 0.65 | 94.8% | 100% | 0.0% |
+| 0.1 | 14 | 1.4 | 96.3% | 100% | 0.0% |
+| 0.25 | 14 | 3.5 | 98.2% | 100% | 0.0% |
+| 0.5 | 12 | 6.0 | 98.9% | 100% | 0.0% |
+| 1.0 (full rehearsal, ceiling) | 15 | 15 | 99.9% | 100% | 0.0% |
+
+- naive stage 2 destroys 46% of A. paper's naive popqa number on llama-3-8b was 46.0% retained, ours is 53.9%.
+- the curve is almost all in the first step: 100 random A rows per epoch (each A fact seen ~0.65 times in total) recovers 41 of the
+  46 lost points. everything past ratio 0.1 is within 4 points of the ceiling.
+- every run hit 100% on its train split, so no run failed rules 2 / 3. the last 1..3 facts take 5..10 extra epochs each time.
+- heldout popqa stays at 0 throughout: nothing generalizes to untrained facts, as expected for memorization.
+- one seed. treat differences under ~1.5 points as noise until the 3-seed rerun.
+
+things this run taught about the setup:
+- questions with two different gold answers (popqa "What genre is Taxi?", lama N-M relations) make 100% unreachable; the pools
+  now drop them.
+- a constant lr stalls in the 98..98.5% band for 5+ epochs; warmup + cosine to a 10% floor converges monotonically.
+
 ## not built yet
 
 - paraphrased copies of the A questions (generalization axis the paper skips): an llm api job, stored next to the pool as
