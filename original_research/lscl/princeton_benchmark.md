@@ -96,7 +96,8 @@ evoke/OlMo2_1b/lscl/facts.py           template, normalize, generate_greedy (sha
 evoke/OlMo2_1b/lscl/filter_unknown.py  step 1  what does the model know  -> data/lscl/olmo2_1b/<name>.jsonl
 evoke/OlMo2_1b/lscl/make_splits.py     step 2  cut A / B / heldout        -> data/lscl/olmo2_1b/splits/<name>_{A,B,heldout}.jsonl
 evoke/OlMo2_1b/lscl/eval_facts.py      accuracy(model, tokenizer, facts), the official match rule
-evoke/OlMo2_1b/lscl/run_stage.py       one training stage + evals        -> weights/lscl/olmo2_1b/<run>/, results/lscl/<run>.json
+evoke/OlMo2_1b/lscl/run_stage.py       run_stage(): one training stage + evals -> weights/lscl/olmo2_1b/<run>/, results/lscl/<run>.json
+evoke/OlMo2_1b/lscl/experiment.py      the sweep: stage 1, then stage 2 per replay ratio
 synapse/train/data_to_loaders.py       SFTDataset: (prompt, answer) rows -> padded input_ids / attention_mask / labels; ReplayDataset: per-epoch redraw of a replay pool
 synapse/train/train.py                 the loop (accumulation, clip, autocast, resume, eval_fn stop hook)
 ```
@@ -131,38 +132,40 @@ no gradient. the boundaries live in the tensors themselves (first label != -100,
 results row (`results/lscl/<run>.json`), one per stage run:
 ```
 {"run": "popqa_A_naive", "init": "instruct" | "<previous run>", "train_split": "popqa_A", "replay": null | "popqa_A", "replay_ratio": 0.0, "lr": 5e-5, "batch_size": 32, "batches": 630, "epochs": 10, "reached_100": true,
- "acc": {"popqa_A": 1.0, "popqa_heldout": 0.0, ...}}      # every --eval split, after this stage
+ "acc": {"popqa_A": 1.0, "popqa_heldout": 0.0, ...}}      # every EVAL split, after this stage
 ```
 
-## flow of one experiment (A = popqa, B = lama, method = naive)
+## flow of one experiment (A = popqa, B = lama)
 
-on the 5090, from repo root:
+no command line args anywhere: every choice is a constant at the top of its file
+(`filter_unknown.DATASETS`, `make_splits.DATASETS`, `run_stage.LR / BATCH_SIZE / MAX_EPOCHS / EXTRA_EPOCHS`,
+`experiment.A / B / EVAL / REPLAY_RATIOS`). on the 5090, from repo root:
 ```
-python -m evoke.OlMo2_1b.lscl.filter_unknown popqa            # once per pool, minutes. also the zero-shot accuracy per dataset
-python -m evoke.OlMo2_1b.lscl.filter_unknown lama
-python -m evoke.OlMo2_1b.lscl.make_splits popqa               # once per pool
-python -m evoke.OlMo2_1b.lscl.make_splits lama
-python -m evoke.OlMo2_1b.lscl.run_stage --run popqa_A_naive --train popqa_A --eval popqa_A lama_B popqa_heldout
-python -m evoke.OlMo2_1b.lscl.run_stage --run popqa_A_naive__lama_B --init popqa_A_naive --train lama_B --eval popqa_A lama_B popqa_heldout
+python -m evoke.OlMo2_1b.lscl.filter_unknown   # once: what the model knows, per pool in DATASETS. also the zero-shot accuracy
+python -m evoke.OlMo2_1b.lscl.make_splits      # once: A / B / heldout files
+python -m evoke.OlMo2_1b.lscl.experiment       # stage 1 on A, then stage 2 on B once per REPLAY_RATIOS, all from the stage 1 weights
 ```
-retention = `acc.popqa_A` in the second results file.
+experiment.py skips any run whose results json exists, so it can be relaunched after a crash.
+run names: `popqa_A` (stage 1), `popqa_A__lama_B_replay0.0` (naive, the floor) ... `popqa_A__lama_B_replay1.0` (full rehearsal, the ceiling).
+retention = `acc.popqa_A` in each stage 2 results file.
 
 the two reference lines every method is judged against:
-- floor: naive, the commands above.
-- ceiling: rehearsal, stage 2 with `--replay popqa_A --replay_ratio 1`. every epoch of stage 2 trains on all of B plus a fresh
-  random ratio x |B| rows of A (ratio 1 = all of A). A rows are re-drawn each epoch from (seed, epoch), so exposure is uniform
-  over A and the draw is deterministic on resume. it is not a method (rule 4), it is what "no forgetting" looks like.
-  the ratio sweep 0..1 is a curve of retention vs re-exposure; since epochs vary per run, plot against ratio x epochs too.
+- floor: replay ratio 0, plain finetune on B.
+- ceiling: replay ratio 1. every epoch of stage 2 trains on all of B plus a fresh random ratio x |B| rows of A (1 = all of A).
+  A rows are re-drawn each epoch from (seed, epoch), so exposure is uniform over A and the draw is deterministic on resume.
+  it is not a method (rule 4), it is what "no forgetting" looks like.
+  the ratio sweep is a curve of retention vs re-exposure; since epochs vary per run, plot against ratio x epochs too.
+a method is a new stage 2 variant in experiment.py (a change to SFTModel.compute_loss or the optimizer in run_stage.py).
 
 ## what run_stage does
 
-1. load the instruct model in fp32 (or `--init <run>`'s final weights), wrap it in a module whose compute_loss(batch) returns the
+1. load the instruct model in fp32 (or the init run's final.pt), wrap it in a module whose compute_loss(batch) returns the
    lm loss on the batch dict. forward runs under bf16 autocast, params and adam states stay fp32 (a 1b is ~16 GB, fits the 5090).
-2. SFTDataset from the train split (+ the replay pool behind it, wrapped in ReplayDataset when --replay is set). AdamW (0.9, 0.95), wd 0, clip 1.0, lr 5e-5, batch 32, no scheduler.
-3. train() with eval_fn = accuracy on the train split, every epoch. stop at the first epoch that hits 100% plus `--extra_epochs`
-   more (default 0). cap `--max_epochs` 20: if 100 is never reached the run is written with reached_100 = false and the
-   method failed (rules 2 / 3).
-4. after stopping: accuracy on every `--eval` split with the official rule (greedy to eos, `.strip().lower() ==` the answer),
+2. SFTDataset from the train split (+ the replay pool behind it, wrapped in ReplayDataset when replay is set). AdamW (0.9, 0.95), wd 0, clip 1.0, lr 5e-5, batch 32, no scheduler.
+3. train() with eval_fn = accuracy on the train split, every epoch. stop at the first epoch that hits 100% plus EXTRA_EPOCHS
+   more (0). cap MAX_EPOCHS (50, an epoch is one pass over B whatever the replay ratio): if 100 is never reached the run is
+   written with reached_100 = false and the method failed (rules 2 / 3).
+4. after stopping: accuracy on every EVAL split with the official rule (greedy to eos, `.strip().lower() ==` the answer),
    save `weights/lscl/olmo2_1b/<run>/final.pt` (model state dict only), write the results row.
 
 ## not built yet
