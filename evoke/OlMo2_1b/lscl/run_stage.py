@@ -23,7 +23,9 @@ LR = 5e-5
 BATCH_SIZE = 32
 # cap per stage: a run that is not at 100% by then is written with reached_100 = false (rules 2 / 3)
 MAX_EPOCHS = 50
-# epochs to keep training after the first epoch at 100%
+# a stage is done when train-split accuracy reaches STOP_ACC (rules 2 / 3 say 1.0; 0.99 is the agreed fallback if the last
+# fact or two never lands), then EXTRA_EPOCHS more epochs at or above it
+STOP_ACC = 1.0
 EXTRA_EPOCHS = 0
 # lr schedule: linear warmup for WARMUP_FRAC of the decay horizon, cosine from LR down to LR * LR_FLOOR over SCHED_EPOCHS,
 # then held at the floor until MAX_EPOCHS. a constant lr leaves the last ~2% of facts flipping in and out between epochs
@@ -84,26 +86,28 @@ def run_stage(run, train_split, eval_splits, init="instruct", replay=None, repla
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, betas=(0.9, 0.95), weight_decay=0.0)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: lr_factor(step, batches_per_epoch))
 
-    # per-epoch accuracy on the facts being trained. stop after the first 100% plus EXTRA_EPOCHS more at 100%
-    state = {"epochs": 0, "epochs_at_100": 0, "first_100_epoch": None}  # {str: int | None}
+    # per-epoch accuracy on the facts being trained. stop after the first epoch at STOP_ACC plus EXTRA_EPOCHS more there.
+    # epochs_at_stop is the only counter that matters for stopping; it survives a resume because a resumed run re-evaluates
+    state = {"epochs_at_stop": 0, "stop_acc_seen": None}  # {str: int | float | None}
 
     def eval_fn(m):
-        state["epochs"] += 1
         acc = accuracy(m.lm, tokenizer, facts)
-        if acc == 1.0:
-            state["epochs_at_100"] += 1
-            if state["first_100_epoch"] is None:
-                state["first_100_epoch"] = state["epochs"]
+        if acc >= STOP_ACC:
+            state["epochs_at_stop"] += 1
+            if state["stop_acc_seen"] is None:
+                state["stop_acc_seen"] = acc
         else:
-            state["epochs_at_100"] = 0
-        return {f"acc_{train_split}": acc}, state["epochs_at_100"] > EXTRA_EPOCHS
+            state["epochs_at_stop"] = 0
+        return {f"acc_{train_split}": acc}, state["epochs_at_stop"] > EXTRA_EPOCHS
 
     batches = train(
         model, dataset, BATCH_SIZE, optimizer, str(WEIGHTS_DIR / run), MAX_EPOCHS * batches_per_epoch, scheduler=scheduler,
         batches_per_log=10, batches_per_save=batches_per_epoch, batches_per_eval=batches_per_epoch, eval_fn=eval_fn,
     )
-    reached_100 = state["first_100_epoch"] is not None
-    print(f"[{run}] stopped after {batches} batches, {state['epochs']} epochs, reached 100%: {reached_100}" + ("" if reached_100 else " (RULE FAIL)"))
+    # evals happen at epoch boundaries and stop there, so epochs is exact from the global batch count (also right after a resume)
+    epochs = batches // batches_per_epoch
+    reached = state["stop_acc_seen"] is not None
+    print(f"[{run}] stopped after {batches} batches, {epochs} epochs, reached {STOP_ACC:.0%}: {reached}" + ("" if reached else " (RULE FAIL)"))
 
     model.eval()
     acc = {name: accuracy(lm, tokenizer, load_facts(SPLITS_DIR / f"{name}.jsonl")[:limit]) for name in eval_splits}  # {split: float}
@@ -114,8 +118,8 @@ def run_stage(run, train_split, eval_splits, init="instruct", replay=None, repla
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     result = {
         "run": run, "init": init, "train_split": train_split, "replay": replay, "replay_ratio": replay_ratio,
-        "lr": LR, "schedule": f"warmup{WARMUP_FRAC}_cosine{SCHED_EPOCHS}ep_floor{LR_FLOOR}", "batch_size": BATCH_SIZE, "batches": batches, "epochs": state["epochs"],
-        "first_100_epoch": state["first_100_epoch"], "reached_100": reached_100, "acc": acc,
+        "lr": LR, "schedule": f"warmup{WARMUP_FRAC}_cosine{SCHED_EPOCHS}ep_floor{LR_FLOOR}", "batch_size": BATCH_SIZE, "batches": batches, "epochs": epochs,
+        "stop_acc": STOP_ACC, "reached_stop_acc": reached, "acc": acc,
     }
     (RESULTS_DIR / f"{run}.json").write_text(json.dumps(result, indent=2))
     print(f"[{run}] wrote {RESULTS_DIR / f'{run}.json'}")
