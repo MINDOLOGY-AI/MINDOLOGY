@@ -1,0 +1,26 @@
+{
+    "model": {
+        "module_path": "mind.interpviz.models.xor.model",
+        "class_name": "XORNet",
+        "weights_path": "interpviz/models/xor/weights.pt",
+        "constructor_args": {},
+        "example_inputs": [
+            [
+                [
+                    0.0,
+                    1.0
+                ]
+            ]
+        ],
+        "input_dtypes": [
+            "float32"
+        ]
+    },
+    "expanded_groups": [],
+    "custom_modules": {},
+    "names": {},
+    "tensors": {},
+    "display": {},
+    "marked": [],
+    "capture_mode": "all"
+}

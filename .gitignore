@@ -1,0 +1,13 @@
+# secrets
+.env
+
+# big files
+data/
+weights/
+results/
+
+# python
+venv
+__pycache__/
+*.pyc
+*.pt

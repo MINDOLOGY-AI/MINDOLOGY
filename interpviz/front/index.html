@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>interpviz</title>
+    <base href="/interpviz/">
+    <link rel="stylesheet" href="/components/TechnoParadisalTheme.css">
+    <link rel="stylesheet" href="/components/AuthBox/AuthBox.css">
+    <link rel="stylesheet" href="/components/BoardCanvas/BoardCanvas.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <a href="/" class="hub-link" title="back to hub">hub</a>
+        <h1>interpviz</h1>
+        <div id="controls">
+            <input id="meta-folder" type="text" value="interpviz/models/olmo2_1b" placeholder="meta folder (e.g. interpviz/models/olmo2_1b)">
+            <button id="btn-load">load</button>
+            <span class="sep"></span>
+            <span id="model-status"></span>
+            <span class="sep"></span>
+            <textarea id="input-tensor" rows="1" placeholder="inputs JSON">[[[0, 1]]]</textarea>
+            <button id="btn-forward">forward</button>
+            <span class="sep"></span>
+            <button id="btn-device">cpu</button>
+            <span class="sep"></span>
+            <button id="btn-groups">groups</button>
+            <button id="btn-mark-mode" title="click nodes to mark/unmark them">mark mode</button>
+            <button id="btn-marks" title="list marked nodes">marks</button>
+            <span class="sep"></span>
+            <button id="btn-capture-mode">show all</button>
+        </div>
+    </header>
+    <board-canvas id="board"></board-canvas>
+
+    <auth-box></auth-box>
+
+    <!-- full-page gate shown when logged out -->
+    <div id="auth-overlay" style="display:none;">
+        <div class="auth-overlay-msg">please log in — top right</div>
+    </div>
+
+    <script type="module" src="/components/AuthBox/AuthBox.js"></script>
+    <script type="module" src="/components/BoardCanvas/BoardCanvas.js"></script>
+    <script type="module" src="js/main.js"></script>
+    <script type="module">
+        // login gate: cover the app until authed; reload once logged in
+        const overlay = document.getElementById('auth-overlay');
+        fetch('/auth/me', { credentials: 'same-origin' }).then(res => {
+            overlay.style.display = res.ok ? 'none' : 'flex';
+        });
+        document.addEventListener('auth-changed', (e) => {
+            if (e.detail.user) location.reload();
+            else overlay.style.display = 'flex';
+        });
+    </script>
+</body>
+</html>
