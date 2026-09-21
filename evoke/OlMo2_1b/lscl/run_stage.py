@@ -56,6 +56,30 @@ class SFTModel(nn.Module):
         return loss, {}
 
 
+def eval_splits_acc(lm, tokenizer, eval_splits, limit=None):
+    # {split: accuracy}. *_known splits use the alias rule (prior knowledge), everything else the strict trained-fact rule
+    return {
+        name: accuracy(lm, tokenizer, load_facts(SPLITS_DIR / f"{name}.jsonl")[:limit], alias=name.endswith("_known"))
+        for name in eval_splits
+    }
+
+
+def eval_run(run, eval_splits):
+    # score a finished run's final.pt on more splits and merge them into its results row (fp32, same as the in-training evals)
+    lm, _ = load_olmo2_model(dtype=torch.float32)
+    tokenizer = load_olmo2_tokenizer()
+    lm.load_state_dict(torch.load(WEIGHTS_DIR / run / "final.pt", map_location="cpu", weights_only=True))
+    lm.eval()
+    acc = eval_splits_acc(lm, tokenizer, eval_splits)
+    path = RESULTS_DIR / f"{run}.json"
+    result = json.loads(path.read_text())
+    result["acc"].update(acc)
+    path.write_text(json.dumps(result, indent=2))
+    for name, a in acc.items():
+        print(f"[{run}]   acc {name}: {100 * a:.1f} (filled)")
+    return result
+
+
 def run_stage(run, train_split, eval_splits, init="instruct", replay=None, replay_ratio=0.0, limit=None):
     # run: name -> weights/lscl/olmo2_1b/<run>/ and results/lscl/<run>.json
     # train_split / eval_splits / replay: split stems under data/lscl/olmo2_1b/splits, e.g. "popqa_A"
@@ -110,11 +134,14 @@ def run_stage(run, train_split, eval_splits, init="instruct", replay=None, repla
     print(f"[{run}] stopped after {batches} batches, {epochs} epochs, reached {STOP_ACC:.0%}: {reached}" + ("" if reached else " (RULE FAIL)"))
 
     model.eval()
-    acc = {name: accuracy(lm, tokenizer, load_facts(SPLITS_DIR / f"{name}.jsonl")[:limit]) for name in eval_splits}  # {split: float}
+    acc = eval_splits_acc(lm, tokenizer, eval_splits, limit)
     for name, a in acc.items():
         print(f"[{run}]   acc {name}: {100 * a:.1f}")
 
     torch.save(lm.state_dict(), WEIGHTS_DIR / run / "final.pt")
+    # the training checkpoint (model + adam, ~4x final.pt) only exists to resume an interrupted run; the run is done
+    for ck in (WEIGHTS_DIR / run).glob("epoch_*_batch_*.pt"):
+        ck.unlink()
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     result = {
         "run": run, "init": init, "train_split": train_split, "replay": replay, "replay_ratio": replay_ratio,
