@@ -170,32 +170,74 @@ a method is a new stage 2 variant in experiment.py (a change to SFTModel.compute
 4. after stopping: accuracy on every EVAL split with the official rule (greedy to eos, `.strip().lower() ==` the answer),
    save `weights/lscl/olmo2_1b/<run>/final.pt` (model state dict only), write the results row.
 
-## results, 2026-09-21, run 1 (raw jsons in results/lscl/, gitignored)
+## results, 2026-09-21/22 (raw jsons in results/lscl/, gitignored; logs in results/lscl/logs_*)
 
-A = popqa_A (2000 unknown popqa facts), B = lama_B (2000 unknown lama facts), olmo2-1b-instruct, lr 5e-5 cosine, batch 32.
-zero-shot before anything: popqa 10.9% known, lama 24.4% known (those facts were excluded).
-stage 1: 100% on A after 19 epochs. B before stage 2: 4.7% (the stage 1 model on unseen lama).
+A = popqa_A<n>, B = lama_B<n>, olmo2-1b-instruct, lr 5e-5 warmup + cosine to 10% floor, batch 32, one seed.
+zero-shot before anything: popqa 10.9% known, lama 24.4% known (those facts are excluded from A / B and form the known sets).
+known sets = facts the untrained model answered correctly (popqa 1,334, lama 2,000), scored with the alias rule, so the
+untrained model is 100% on them by construction. every run below reached 100% on its train split (no rule 2 / 3 failures).
 
-| replay ratio | epochs to 100% B | ratio x epochs | retention on A | B | popqa heldout |
-|---|---|---|---|---|---|
-| 0 (naive, floor) | 16 | 0 | 53.9% | 100% | 0.0% |
-| 0.05 | 13 | 0.65 | 94.8% | 100% | 0.0% |
-| 0.1 | 14 | 1.4 | 96.3% | 100% | 0.0% |
-| 0.25 | 14 | 3.5 | 98.2% | 100% | 0.0% |
-| 0.5 | 12 | 6.0 | 98.9% | 100% | 0.0% |
-| 1.0 (full rehearsal, ceiling) | 15 | 15 | 99.9% | 100% | 0.0% |
+### stage 1: memorize A
 
-- naive stage 2 destroys 46% of A. paper's naive popqa number on llama-3-8b was 46.0% retained, ours is 53.9%.
-- the curve is almost all in the first step: 100 random A rows per epoch (each A fact seen ~0.65 times in total) recovers 41 of the
-  46 lost points. everything past ratio 0.1 is within 4 points of the ceiling.
-- every run hit 100% on its train split, so no run failed rules 2 / 3. the last 1..3 facts take 5..10 extra epochs each time.
-- heldout popqa stays at 0 throughout: nothing generalizes to untrained facts, as expected for memorization.
-- one seed. treat differences under ~1.5 points as noise until the 3-seed rerun.
+| A size | epochs to 100% | lama B before stage 2 | popqa_known | lama_known |
+|---|---|---|---|---|
+| 2000 | 19 | 4.7 | 5.8 | 7.0 |
+| 4000 | 18 | 8.2 | 28.7 | 16.9 |
+| 6000 | 18 | 2.5 | 28.3 | 12.8 |
+
+### stage 2: train on B from the stage 1 weights, replay = fresh ratio x |B| rows of A every epoch
+
+| size | replay ratio | epochs to 100% B | ratio x epochs | A retained | popqa heldout | popqa_known | lama_known |
+|---|---|---|---|---|---|---|---|
+| 2000 | 0.0 | 16 | 0.00 | 53.9 | 0.0 | 3.2 | 17.2 |
+| 2000 | 0.01 | 13 | 0.13 | 91.4 | 1.0 | 6.2 | 20.9 |
+| 2000 | 0.025 | 14 | 0.35 | 93.2 | 3.0 | 7.8 | 18.7 |
+| 2000 | 0.05 | 13 | 0.65 | 94.8 | 0.0 | 7.0 | 22.2 |
+| 2000 | 0.1 | 14 | 1.40 | 96.3 | 0.0 | 7.3 | 22.5 |
+| 2000 | 0.25 | 14 | 3.50 | 98.2 | 0.0 | 6.1 | 18.7 |
+| 2000 | 0.5 | 12 | 6.00 | 98.9 | 0.0 | 5.5 | 21.9 |
+| 2000 | 1.0 | 15 | 15.00 | 99.9 | 0.0 | 6.8 | 22.3 |
+| 4000 | 0.0 | 17 | 0.00 | 42.6 | 4.0 | 14.5 | 50.0 |
+| 4000 | 0.01 | 17 | 0.17 | 88.1 | 2.5 | 22.3 | 30.9 |
+| 4000 | 0.025 | 15 | 0.38 | 90.2 | 3.5 | 27.2 | 49.8 |
+| 4000 | 0.05 | 16 | 0.80 | 93.5 | 4.0 | 23.2 | 54.6 |
+| 4000 | 0.1 | 15 | 1.50 | 94.5 | 3.0 | 25.3 | 48.9 |
+| 4000 | 0.25 | 16 | 4.00 | 98.4 | 2.0 | 26.1 | 47.8 |
+| 4000 | 0.5 | 14 | 7.00 | 99.1 | 2.0 | 28.5 | 40.0 |
+| 4000 | 1.0 | 14 | 14.00 | 99.6 | 2.0 | 25.7 | 49.2 |
+| 6000 | 0.0 | 16 | 0.00 | 32.1 | 3.5 | 18.1 | 33.1 |
+| 6000 | 0.01 | 16 | 0.16 | 84.7 | 4.5 | 26.8 | 30.0 |
+| 6000 | 0.025 | 16 | 0.40 | 89.1 | 4.0 | 30.7 | 41.3 |
+| 6000 | 0.05 | 16 | 0.80 | 91.4 | 5.0 | 30.7 | 32.8 |
+| 6000 | 0.1 | 17 | 1.70 | 94.1 | 5.0 | 30.7 | 46.2 |
+| 6000 | 0.25 | 16 | 4.00 | 97.9 | 5.0 | 27.1 | 40.6 |
+| 6000 | 0.5 | 14 | 7.00 | 98.5 | 4.5 | 30.4 | 22.9 |
+| 6000 | 1.0 | 15 | 15.00 | 99.9 | 4.0 | 27.7 | 41.9 |
+
+### what it says
+
+- naive floor scales with size: 53.9 / 42.6 / 32.1 for 2000 / 4000 / 6000, about 11 points of A lost per 2000 extra B facts.
+- the replay curve is almost all in the first step. ratio 0.01 (20 / 40 / 60 A rows per epoch) gives 91.4 / 88.1 / 84.7, i.e.
+  recovers 37 / 45 / 53 of the lost points. 0.025 and 0.05 add ~2 points each, 0.25 and above are within 2 points of the ceiling.
+- it is an anchor, not re-teaching: in the 2000 / 0.01 run only 250 of the 2000 A facts were ever replayed (12.5%). the never
+  replayed 1750 score 91.0%, the replayed 250 score 94.4%, naive is 53.9%. a trickle of A-format examples keeps the A direction
+  alive against the B gradient; per-fact re-exposure is worth ~3 more points.
+- memorizing A to 100% destroys prior knowledge: known sets go 100 -> 5.8 / 7.0 (popqa / lama) at size 2000, 28.7 / 16.9 at 4000,
+  28.3 / 12.8 at 6000. spot check of 60 popqa_known facts after stage 1 at 2000: 1 survives; Bach -> "indie rock",
+  Berlin -> "indie rock", Spielberg -> "science fiction film", Buddhism -> "politician". real recall replaced by A's answer
+  distribution. size 2000 is the worst; 4000 and 6000 agree with each other.
+- replay does nothing for prior knowledge: the known columns are flat across ratios at every size. it protects A only.
+- training on lama B re-teaches lama-style prior facts (lama_known 7 -> 17..22 at 2000, 17 -> 31..55 at 4000) but not popqa-style.
+- popqa heldout stays at 0..5: nothing generalizes to untrained facts.
+- the paper's metric (A retention) would rate every replay run >= 0.25 as near-perfect while the model has lost 70..95% of what it
+  knew before. any method for LSCL has to be scored on the known columns too.
+- one seed. differences under ~2 points are noise.
 
 things this run taught about the setup:
 - questions with two different gold answers (popqa "What genre is Taxi?", lama N-M relations) make 100% unreachable; the pools
   now drop them.
 - a constant lr stalls in the 98..98.5% band for 5+ epochs; warmup + cosine to a 10% floor converges monotonically.
+- the last 1..3 facts of any split take 3..8 extra epochs each run; a 50 epoch cap was never approached.
 
 ## not built yet
 
