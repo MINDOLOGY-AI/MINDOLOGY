@@ -16,7 +16,8 @@ FIRE_PERCENTILE = 99  # a random window "fires" if any token exceeds the unit's 
 SEED = 0
 
 
-async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
+async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, units=None):
+    # units: optional {hook_name: [unit ids]} to label a subset instead of every unit
     # workers: max units in flight at once (a unit holds its slot across both of its calls, otherwise the
     # fifo semaphore would queue every second call behind all 131k first calls and nothing completes for ages)
     picks_dir = Path(picks_dir)
@@ -50,8 +51,8 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200):
         }
         out_path = picks_dir / f"{name}.labels.jsonl"
         done = {json.loads(line)["unit"] for line in out_path.read_text().splitlines()} if out_path.exists() else set()  # {int}
-        todo += [(name, u) for u in range(d) if u not in done]
-        print(f"{name}: {d - len(done)} units to label ({len(done)} already done)", flush=True)
+        todo += [(name, u) for u in (units[name] if units else range(d)) if u not in done]
+        print(f"{name}: {len([1 for n, _ in todo if n == name])} units to label ({len(done)} already done)", flush=True)
 
     sem = asyncio.Semaphore(workers)
 
