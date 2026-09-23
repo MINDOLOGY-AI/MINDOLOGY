@@ -7,7 +7,7 @@ import torch
 from evoke.OlMo2_1b.run.loader import load_olmo2_model
 from synapse.interp.static_weight_analysis import analyze_model
 
-OUT_PATH = Path.cwd() / "results" / "static_weight_analysis_olmo2_1b.json"
+OUT_PATH = Path.cwd() / "results" / "OlMo2_1b" / "static_weight_analysis.json"
 
 
 def main():
