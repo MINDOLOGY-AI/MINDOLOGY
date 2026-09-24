@@ -131,7 +131,7 @@ def main(layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens
 
     # --- phase 3: label + score every feature (resumes from the jsonl files) ---
     units = {names[i]: list(range(label_limit)) for i in layers} if label_limit else None
-    asyncio.run(label_units(picks_dir, tokenizer, MODEL, [names[i] for i in layers], workers=WORKERS, units=units))
+    asyncio.run(label_units(picks_dir, tokenizer, MODEL, [names[i] for i in layers], workers=WORKERS, units=units, unit_word="feature"))
 
     # --- summary ---
     pm = json.loads((picks_dir / "meta.json").read_text())

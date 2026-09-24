@@ -16,7 +16,8 @@ FIRE_PERCENTILE = 99  # a random window "fires" if any token exceeds the unit's 
 SEED = 0
 
 
-async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, units=None):
+async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, units=None, unit_word="neuron"):
+    # unit_word: what the prompts call a unit ("neuron" for MLP neurons, "feature" for SAE features)
     # units: optional {hook_name: [unit ids]} to label a subset instead of every unit
     # workers: max units in flight at once (a unit holds its slot across both of its calls, otherwise the
     # fifo semaphore would queue every second call behind all 131k first calls and nothing completes for ages)
@@ -78,7 +79,7 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, unit
         # label prompt: valid label slots, strongest first (slots are already ordered within top-k / iw)
         lab = [s for s in label_slots if pick_chunk[u, s] >= 0]
         lab.sort(key=lambda s: -windows[u, s, wb])
-        raw_label = await chat(generate_messages([text(pick_chunk[u, s], pick_pos[u, s], windows[u, s], True) for s in lab]),
+        raw_label = await chat(generate_messages([text(pick_chunk[u, s], pick_pos[u, s], windows[u, s], True) for s in lab], unit_word),
                                model, GENERATE_MAX_TOKENS)
         label = raw_label.split("activates on")[-1].rstrip(".").strip()
 
@@ -89,7 +90,7 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, unit
         rng.shuffle(items)
         rendered = [text(pick_chunk[u, s], pick_pos[u, s], None, False) if kind == "pick"
                     else text(h["rand_chunk"][u, s], h["rand_pos"][u, s], None, False) for (kind, s), _ in items]
-        raw_test = await chat(score_messages(label, rendered), model, 2 * len(items) + 5)
+        raw_test = await chat(score_messages(label, rendered, unit_word), model, 2 * len(items) + 5)
         said = parse_score_answer(raw_test, len(items))
         truth = [t for _, t in items]
         if said is None:
