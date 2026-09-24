@@ -29,7 +29,7 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
             key = kv["OPENROUTER_API_KEY"].strip().strip("'\"")
         # pool sized for up to ~1000 concurrent label calls
         _client = httpx.AsyncClient(headers={"Authorization": f"Bearer {key}"}, timeout=TIMEOUT_S,
-                                    limits=httpx.Limits(max_connections=1024, max_keepalive_connections=128))
+                                    limits=httpx.Limits(max_connections=1024, max_keepalive_connections=1024))
 
     body = {"model": model, "messages": messages, "max_tokens": max_tokens, "reasoning": {"enabled": reasoning}}
     if temperature is not None:
