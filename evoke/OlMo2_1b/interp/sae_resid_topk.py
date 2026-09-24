@@ -37,7 +37,7 @@ EVAL_BATCHES = 50
 PICK_CHUNKS = 16000  # x 128 = 2.05M tokens
 PICK_BATCH_CHUNKS = 8
 MODEL = "deepseek/deepseek-v4-flash-0731"
-WORKERS = 300
+WORKERS = 800
 
 
 def make_sae(expansion):
