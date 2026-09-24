@@ -91,13 +91,24 @@ def main(layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens
     core = json.loads(core_path.read_text()) if core_path.exists() else {"saes": {}}
     for g in range(0, len(layers), group_size):
         group = layers[g:g + group_size]
-        if all((weights_dir / f"L{i}.pt").exists() for i in group) and all(names[i] in core["saes"] for i in group):
+        if all(names[i] in core["saes"] and "density_hist" in core["saes"][names[i]] for i in group):
             print(f"group {group}: already trained + evaluated, skipping", flush=True)
             continue
-        print(f"=== training layers {group} ===", flush=True)
-        saes = train_group(lm, group, expansion, train_ds, eval_ds, train_tokens, batch_chunks, meta["chunk_size"], weights_dir, results_dir)
-        c = evaluate_core(lm, {names[i]: saes[i] for i in group}, {names[i]: i for i in group}, eval_ds, eval_batches, batch_chunks)
+        if all((weights_dir / f"L{i}.pt").exists() for i in group):
+            print(f"=== layers {group}: weights exist, loading for eval ===", flush=True)
+            saes = {i: make_sae(expansion) for i in group}
+            for i in group:
+                saes[i].load_state_dict(torch.load(weights_dir / f"L{i}.pt"))
+                saes[i].cuda()
+        else:
+            print(f"=== training layers {group} ===", flush=True)
+            saes = train_group(lm, group, expansion, train_ds, eval_ds, train_tokens, batch_chunks, meta["chunk_size"], weights_dir, results_dir)
+        c, density = evaluate_core(lm, {names[i]: saes[i] for i in group}, {names[i]: i for i in group}, eval_ds, eval_batches, batch_chunks)
+        (results_dir / "density").mkdir(exist_ok=True)
+        for n, d in density.items():
+            d.tofile(results_dir / "density" / f"{n}.density.bin")  # (D,) float64 firing fraction on eval tokens
         core["ce_clean"] = c["ce_clean"]
+        core["density_bins"] = c["density_bins"]
         core["saes"].update(c["saes"])
         core["config"] = {"k": K, "expansion": expansion, "train_tokens": train_tokens, "lr": LR, "group_size": group_size,
                           "eval_tokens": eval_batches * batch_chunks * meta["chunk_size"]}

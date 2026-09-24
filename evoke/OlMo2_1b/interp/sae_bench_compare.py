@@ -7,6 +7,7 @@ import json
 import shutil
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -81,6 +82,9 @@ def evaluate_core(lm, saes, layers, eval_ds, n_batches, batch_chunks):
     # saes: {name: sae}, layers: {name: layer index the sae reads}
     dl = dataset_to_dataloader(eval_ds, batch_chunks, cur_epoch=0)
     stats = {name: {"ce": 0.0, "ce_zero": 0.0, "mse": 0.0, "expl_var": 0.0, "l0": 0.0} for name in saes}
+    # {name: (D,) float64} how many eval tokens each feature fired on
+    fire_counts = {name: torch.zeros(sae.d_sae, dtype=torch.float64, device="cuda") for name, sae in saes.items()}
+    n_tokens = 0
     ce_clean = 0.0
     replacement = {}  # {"fn": callable resid -> resid} set per pass
 
@@ -104,10 +108,11 @@ def evaluate_core(lm, saes, layers, eval_ds, n_batches, batch_chunks):
             labels = ids.long()
             _, loss, _ = lm(input_ids=ids, labels=labels)
             ce_clean += loss.item() / n_batches
+            n_tokens += ids.numel()
             for name, sae in saes.items():
                 st = stats[name]
 
-                def splice(resid, sae=sae, st=st):
+                def splice(resid, sae=sae, st=st, fc=fire_counts[name]):
                     b, L, d = resid.shape
                     x = resid.reshape(-1, d).float()
                     f = sae.encode(x)
@@ -115,13 +120,19 @@ def evaluate_core(lm, saes, layers, eval_ds, n_batches, batch_chunks):
                     st["mse"] += (x_hat - x).pow(2).sum(-1).mean().item() / n_batches
                     st["expl_var"] += (1 - (x_hat - x).pow(2).sum(-1).mean() / x.var(dim=0).sum()).item() / n_batches
                     st["l0"] += (f > 0).float().sum(-1).mean().item() / n_batches
+                    fc += (f > 0).sum(0).double()
                     return x_hat.to(resid.dtype).view(b, L, d)
                 st["ce"] += ce_with(layers[name], splice, ids, labels) / n_batches
                 st["ce_zero"] += ce_with(layers[name], torch.zeros_like, ids, labels) / n_batches
+    # {name: (D,) float64} fraction of eval tokens each feature fires on
+    density = {name: (c / n_tokens).cpu().numpy() for name, c in fire_counts.items()}
     for name, st in stats.items():
         st["ce_recovered"] = (st["ce_zero"] - st["ce"]) / (st["ce_zero"] - ce_clean)
         st["dead_frac_train"] = (saes[name].tokens_since_fired > saes[name].dead_tokens).float().mean().item()
-    return {"ce_clean": ce_clean, "saes": stats}
+        d = density[name]
+        # share of features per log10 density bin: never fired on eval, <1e-5, 1e-5..1e-4, ..., >=1e-1
+        st["density_hist"] = [float((d == 0).mean())] + (np.histogram(np.log10(d[d > 0]), bins=[-np.inf, -5, -4, -3, -2, -1, 0.0001])[0] / len(d)).tolist()
+    return {"ce_clean": ce_clean, "n_eval_tokens": n_tokens, "density_bins": ["never", "<1e-5", "1e-5..1e-4", "1e-4..1e-3", "1e-3..1e-2", "1e-2..1e-1", ">=1e-1"], "saes": stats}, density
 
 
 def main(train_tokens=TRAIN_TOKENS, expansion=EXPANSION, batch_chunks=BATCH_CHUNKS, eval_batches=EVAL_BATCHES,
@@ -153,7 +164,7 @@ def main(train_tokens=TRAIN_TOKENS, expansion=EXPANSION, batch_chunks=BATCH_CHUN
         if (weights_dir / f).exists():
             shutil.copy(weights_dir / f, results_dir / f)
 
-    core = evaluate_core(lm, saes, {name: LAYER for name in saes}, eval_ds, eval_batches, batch_chunks)
+    core, _ = evaluate_core(lm, saes, {name: LAYER for name in saes}, eval_ds, eval_batches, batch_chunks)
     core["config"] = {"layer": LAYER, "k": K, "expansion": expansion, "train_tokens": max_steps * batch_chunks * meta["chunk_size"],
                       "matryoshka_fractions": MATRYOSHKA, "lr": LR, "eval_tokens": eval_batches * batch_chunks * meta["chunk_size"]}
     (results_dir / "core.json").write_text(json.dumps(core, indent=2))
