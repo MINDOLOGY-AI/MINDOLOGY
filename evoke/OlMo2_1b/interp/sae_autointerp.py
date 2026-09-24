@@ -19,7 +19,7 @@ PICKS_DIR = RESULTS_DIR / "picks"
 N_CHUNKS = 8000  # x 128 = 1.02M tokens
 BATCH_CHUNKS = 8
 N_LABEL = 1000
-MODEL = "deepseek/deepseek-v4.1-flash"
+MODEL = "deepseek/deepseek-v4-flash-0731"
 SEED = 0
 
 
@@ -31,7 +31,7 @@ def main(n_chunks=N_CHUNKS, n_label=N_LABEL, expansion=EXPANSION, weights_dir=WE
         sae.load_state_dict(torch.load(weights_dir / f"{name}.pt"))
         sae.cuda().eval()
     names = list(saes)
-    gather_picks(HookedOlmoSAE(lm, LAYER, saes), BIN_DIR / "train.bin", tuple(meta["train_shape"]), names, n_chunks, picks_dir, BATCH_CHUNKS)
+    gather_picks(HookedOlmoSAE(lm, {name: (LAYER, sae) for name, sae in saes.items()}), BIN_DIR / "train.bin", tuple(meta["train_shape"]), names, n_chunks, picks_dir, BATCH_CHUNKS)
 
     # alive = every one of the 40 pick slots filled (>= 40 distinct firings in the run); sample n_label of them
     pm = json.loads((picks_dir / "meta.json").read_text())

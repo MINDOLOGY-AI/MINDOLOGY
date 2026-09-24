@@ -76,16 +76,23 @@ class SameLayerSAETrainer(nn.Module):
         return self
 
 
-def evaluate_core(lm, saes, eval_ds, n_batches, batch_chunks):
-    # CE with the layer output replaced by each SAE's reconstruction (and by zeros), plus recon stats
-    layer = lm.model.layers[LAYER]
+def evaluate_core(lm, saes, layers, eval_ds, n_batches, batch_chunks):
+    # per sae: CE with its layer's output replaced by the SAE reconstruction, and by zeros (per layer), plus recon stats
+    # saes: {name: sae}, layers: {name: layer index the sae reads}
     dl = dataset_to_dataloader(eval_ds, batch_chunks, cur_epoch=0)
-    stats = {name: {"ce": 0.0, "mse": 0.0, "expl_var": 0.0, "l0": 0.0} for name in saes}
-    ce_clean = ce_zero = 0.0
+    stats = {name: {"ce": 0.0, "ce_zero": 0.0, "mse": 0.0, "expl_var": 0.0, "l0": 0.0} for name in saes}
+    ce_clean = 0.0
     replacement = {}  # {"fn": callable resid -> resid} set per pass
 
     def hook(module, inputs, output):
         return (replacement["fn"](output[0]), *output[1:])
+
+    def ce_with(layer_idx, fn, ids, labels):
+        replacement["fn"] = fn
+        h = lm.model.layers[layer_idx].register_forward_hook(hook)
+        _, loss, _ = lm(input_ids=ids, labels=labels)
+        h.remove()
+        return loss.item()
 
     for sae in saes.values():
         sae.eval()
@@ -96,32 +103,25 @@ def evaluate_core(lm, saes, eval_ds, n_batches, batch_chunks):
             ids = _to_cuda(ids)
             labels = ids.long()
             _, loss, _ = lm(input_ids=ids, labels=labels)
-            ce_clean += loss.item()
-            h = layer.register_forward_hook(hook)
-            replacement["fn"] = torch.zeros_like
-            _, loss, _ = lm(input_ids=ids, labels=labels)
-            ce_zero += loss.item()
+            ce_clean += loss.item() / n_batches
             for name, sae in saes.items():
-                def splice(resid, sae=sae, name=name):
+                st = stats[name]
+
+                def splice(resid, sae=sae, st=st):
                     b, L, d = resid.shape
                     x = resid.reshape(-1, d).float()
                     f = sae.encode(x)
                     x_hat = sae.decode(f)
-                    stats[name]["mse"] += (x_hat - x).pow(2).sum(-1).mean().item() / n_batches
-                    stats[name]["expl_var"] += (1 - (x_hat - x).pow(2).sum(-1).mean() / x.var(dim=0).sum()).item() / n_batches
-                    stats[name]["l0"] += (f > 0).float().sum(-1).mean().item() / n_batches
+                    st["mse"] += (x_hat - x).pow(2).sum(-1).mean().item() / n_batches
+                    st["expl_var"] += (1 - (x_hat - x).pow(2).sum(-1).mean() / x.var(dim=0).sum()).item() / n_batches
+                    st["l0"] += (f > 0).float().sum(-1).mean().item() / n_batches
                     return x_hat.to(resid.dtype).view(b, L, d)
-                replacement["fn"] = splice
-                _, loss, _ = lm(input_ids=ids, labels=labels)
-                stats[name]["ce"] += loss.item()
-            h.remove()
-    ce_clean /= n_batches
-    ce_zero /= n_batches
-    for name in saes:
-        stats[name]["ce"] /= n_batches
-        stats[name]["ce_recovered"] = (ce_zero - stats[name]["ce"]) / (ce_zero - ce_clean)
-        stats[name]["dead_frac_train"] = (saes[name].tokens_since_fired > saes[name].dead_tokens).float().mean().item()
-    return {"ce_clean": ce_clean, "ce_zero": ce_zero, "saes": stats}
+                st["ce"] += ce_with(layers[name], splice, ids, labels) / n_batches
+                st["ce_zero"] += ce_with(layers[name], torch.zeros_like, ids, labels) / n_batches
+    for name, st in stats.items():
+        st["ce_recovered"] = (st["ce_zero"] - st["ce"]) / (st["ce_zero"] - ce_clean)
+        st["dead_frac_train"] = (saes[name].tokens_since_fired > saes[name].dead_tokens).float().mean().item()
+    return {"ce_clean": ce_clean, "saes": stats}
 
 
 def main(train_tokens=TRAIN_TOKENS, expansion=EXPANSION, batch_chunks=BATCH_CHUNKS, eval_batches=EVAL_BATCHES,
@@ -153,7 +153,7 @@ def main(train_tokens=TRAIN_TOKENS, expansion=EXPANSION, batch_chunks=BATCH_CHUN
         if (weights_dir / f).exists():
             shutil.copy(weights_dir / f, results_dir / f)
 
-    core = evaluate_core(lm, saes, eval_ds, eval_batches, batch_chunks)
+    core = evaluate_core(lm, saes, {name: LAYER for name in saes}, eval_ds, eval_batches, batch_chunks)
     core["config"] = {"layer": LAYER, "k": K, "expansion": expansion, "train_tokens": max_steps * batch_chunks * meta["chunk_size"],
                       "matryoshka_fractions": MATRYOSHKA, "lr": LR, "eval_tokens": eval_batches * batch_chunks * meta["chunk_size"]}
     (results_dir / "core.json").write_text(json.dumps(core, indent=2))

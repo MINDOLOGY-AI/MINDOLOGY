@@ -41,7 +41,7 @@ class MultiSAETrainer(nn.Module):
         total = 0.0
         metrics = {}
         for i in self.layer_indices:
-            acts = self._acts[i].reshape(-1, self._acts[i].shape[-1])  # (B*seq, d_model)
+            acts = self._acts[i].reshape(-1, self._acts[i].shape[-1]).float()  # (B*seq, d_model)
             loss, m = self.saes[str(i)].compute_loss(acts)
             total = total + loss
             for k, v in m.items():
