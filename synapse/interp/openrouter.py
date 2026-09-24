@@ -38,7 +38,7 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
         try:
             r = await _client.post(URL, json=body)
         except httpx.TransportError as e:  # network hiccup / timeout: retry
-            print(f"  openrouter transport error ({e}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
+            print(f"  openrouter transport error ({type(e).__name__}: {e}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
             await asyncio.sleep(2 ** attempt)
             continue
         if r.status_code in RETRY_STATUS:
