@@ -4,10 +4,8 @@ port the openmindfab CLI here. unify a serving function.
 
 - Fix Up Labeling Prompt
 
-SAE retrain "properly" (`evoke/OlMo2_1b/interp/sae_resid_topk.py`):  
-- re-split interp dataset: ~1.0B train / ~140M eval (now 799M / 341M; same shuffled mix, only 100M of train was used)  
-- TRAIN_TOKENS 100M -> 1B (current L8 expl_var still rising at 100M: 0.741 @50M -> 0.750 @100M)  
-- add LR decay: constant, then linear to 0 over the last 20% of steps (simple_train has no scheduler now)  
-- try 8 SAEs per LM pass instead of 4 if it fits 32GB (~50h -> ~35-40h on weighty)  
-- then rerun eval + picks + relabel (~$85, ~3h), compare density rare tail vs current (31% of features < ideal/10, Gemma Scope 10%), then delete the 100M run  
-
+SAE retrain, all 16 layers at 1B tokens (`evoke/OlMo2_1b/interp/sae_resid_topk.py`, already configured: 1B data split, lr decay, seed 21):  
+- L8 trial done (`results/OlMo2_1b/sae_resid_topk_1bTok/compare_L8/`): recon 19.4% -> 18.3%, CE +3.5% -> +2.8%, rare tail 31% -> 26%. decide if worth it  
+- L8 alone took 6.5h on weighty; try 8 SAEs per LM pass instead of 4 if it fits 32GB  
+- speedups: sparse decoder (only the k active rows), bf16 SAE matmuls  
+- then eval + picks + labels (~$85), then delete the 100M run (`sae_resid_topk`, `olmo2_1b_interp_dataset_100Mrun`)  

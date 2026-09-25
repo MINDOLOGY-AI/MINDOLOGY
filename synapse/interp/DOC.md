@@ -91,6 +91,7 @@ outputs:
 - `weights/evoke/OlMo2_1b/sae_resid_topk_1bTok/L<i>.pt`  
 - `results/OlMo2_1b/sae_resid_topk_1bTok/`: `core.json` (`ce_clean`; per layer ce_sae, recon_err_pct, ce_increase_pct, l0, dead_frac_train, density_hist), `density/L<i>.density.bin` `(D,) float64`, `picks/`, `labels/`, `autointerp.json`, `summary.md`  
 
+result, 1B-token L8 (`results/OlMo2_1b/sae_resid_topk_1bTok/compare_L8/`, same eval batches as the 100M L8): recon err 18.3% vs 19.4%, CE increase +2.8% vs +3.5%, density within 10× of ideal 73% vs 68%, rare (<ideal/10) 26% vs 31%, never fired on eval 1.6% vs 0.3%.  
 result, 100M-token run (all 16 layers, constant lr, `results/OlMo2_1b/sae_resid_topk/`): recon err 13% (L0), 18–20% (L1–L12), 22–25% (L13–L15); CE increase +3–5% (L0–L11), rising to +19% at L15; ~0 dead. autointerp mean 0.65 (L0) → 0.72 (L2) → 0.75–0.77 (L3–L15), ≥0.7: 38% (L0) → 61–69% (L3–L15); vs MLP neurons 0.54.  
 
 # WCCs  
