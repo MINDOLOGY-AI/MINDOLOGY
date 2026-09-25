@@ -3,12 +3,15 @@
 
 import asyncio
 import os
+import random
 from pathlib import Path
 
 import httpx
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
-MAX_RETRIES = 6
+# 12 tries, backoff 1,2,4,..,cap 60s with full jitter: rides out ~7 min network drops without 200 workers reconnecting in lockstep
+MAX_RETRIES = 12
+MAX_BACKOFF_S = 60
 TIMEOUT_S = 120
 RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
@@ -39,11 +42,11 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
             r = await _client.post(URL, json=body)
         except httpx.TransportError as e:  # network hiccup / timeout: retry
             print(f"  openrouter transport error ({type(e).__name__}: {e}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(random.uniform(0, min(2 ** attempt, MAX_BACKOFF_S)))
             continue
         if r.status_code in RETRY_STATUS:
             print(f"  openrouter {r.status_code}, retry {attempt + 1}/{MAX_RETRIES}", flush=True)
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(random.uniform(0, min(2 ** attempt, MAX_BACKOFF_S)))
             continue
         assert r.status_code == 200, f"openrouter {r.status_code}: {r.text[:500]}"
         data = r.json()
@@ -51,7 +54,7 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
         content = data["choices"][0]["message"]["content"]
         if not content:  # provider flake (seen ~1 in 50): retry like a 5xx
             print(f"  openrouter empty content (finish={data['choices'][0].get('finish_reason')}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(random.uniform(0, min(2 ** attempt, MAX_BACKOFF_S)))
             continue
         return content
     raise RuntimeError(f"openrouter: gave up after {MAX_RETRIES} retries")
