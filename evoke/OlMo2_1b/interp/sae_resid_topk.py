@@ -21,7 +21,7 @@ from synapse.probes.sae.TopKSAE import TopKSAE
 from synapse.train.data_to_loaders import BinUnsupervisedDataset, dataset_to_dataloader
 from synapse.train.simple_train import simple_train, _to_cuda
 
-BIN_DIR = Path.cwd() / "data" / "datasteps" / "tokenized" / "olmo2_1b_interp_dataset_1b"
+BIN_DIR = Path.cwd() / "data" / "datasteps" / "tokenized" / "olmo2_1b_interp_dataset"
 WEIGHTS_DIR = Path.cwd() / "weights" / "evoke" / "OlMo2_1b" / "sae_resid_topk_1bTok"
 RESULTS_DIR = Path.cwd() / "results" / "OlMo2_1b" / "sae_resid_topk_1bTok"
 LAYERS = list(range(16))
@@ -38,6 +38,7 @@ PICK_CHUNKS = 16000  # x 128 = 2.05M tokens
 PICK_BATCH_CHUNKS = 8
 MODEL = "deepseek/deepseek-v4-flash-0731"
 WORKERS = 200
+SEED = 21  # global torch seed: SAE init and the picks' importance-weighted draws
 
 
 def make_sae(expansion):
@@ -139,6 +140,7 @@ def main(layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens
          eval_batches=EVAL_BATCHES, pick_chunks=PICK_CHUNKS, label_limit=None, weights_dir=WEIGHTS_DIR, results_dir=RESULTS_DIR):
     # label_limit: label only the first n units per layer (None = every unit); for smoke tests
     torch.backends.cuda.matmul.allow_tf32 = True  # tf32 matmuls: ~2x faster SAE training, standard for SAE training
+    torch.manual_seed(SEED)
     weights_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
     meta = json.loads((BIN_DIR / "meta.json").read_text())

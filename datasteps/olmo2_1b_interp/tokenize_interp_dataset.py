@@ -1,3 +1,7 @@
+# tokenizes the interp txt shards (bos + doc + eos per doc), cuts the token stream into 128-token chunks, shuffles
+# the chunks (seed 21) and writes the first TRAIN_TOKENS to train.bin, the rest to eval.bin.
+# run from repo root: python -m datasteps.olmo2_1b_interp.tokenize_interp_dataset
+
 import json
 import numpy as np
 from pathlib import Path
@@ -5,8 +9,8 @@ from evoke.OlMo2_1b.run.loader import load_olmo2_tokenizer
 from datasteps.olmo2_1b_interp.config import OUTPUT_DIR
 
 CHUNK_SIZE = 128
-TRAIN_SPLIT = 0.7
-SHUFFLE_SEED = 42
+TRAIN_TOKENS = 1_000_000_000
+SHUFFLE_SEED = 21
 WRITE_BATCH = 10_000
 
 TXT_DIR = OUTPUT_DIR  # data/datasteps/txt/olmo2_1b_interp_dataset
@@ -63,7 +67,9 @@ def main():
     rng = np.random.default_rng(SHUFFLE_SEED)
     perm = rng.permutation(num_chunks)
 
-    split_idx = int(num_chunks * TRAIN_SPLIT)
+    assert TRAIN_TOKENS % CHUNK_SIZE == 0
+    split_idx = TRAIN_TOKENS // CHUNK_SIZE
+    assert split_idx < num_chunks, f"{num_chunks * CHUNK_SIZE:,} tokens, need more than {TRAIN_TOKENS:,} for train"
     train_chunks = split_idx
     eval_chunks = num_chunks - split_idx
     print(f"train: {train_chunks:,} chunks | eval: {eval_chunks:,} chunks")
@@ -74,7 +80,7 @@ def main():
     train_path = OUT_DIR / "train.bin"
     with open(train_path, "wb") as f:
         for i in range(0, split_idx, WRITE_BATCH):
-            batch_idx = perm[i:i + WRITE_BATCH]
+            batch_idx = perm[i:min(i + WRITE_BATCH, split_idx)]
             chunks[batch_idx].tofile(f)
             if (i // WRITE_BATCH) % 10 == 0:
                 print(f"  {min(i + WRITE_BATCH, split_idx):,} / {split_idx:,}")

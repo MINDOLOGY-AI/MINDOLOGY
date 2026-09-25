@@ -16,7 +16,7 @@ from synapse.interp.interp_prompt import (render_window, generate_messages, scor
 
 ACT_THRESHOLD_FRAC = 0.01  # a token is marked <<active>> in label windows if its activation > this * the unit's max
 FIRE_PERCENTILE = 99  # a random window "fires" if any token exceeds the unit's value at this percentile
-SEED = 0
+SEED = 21
 # circuit breaker: abort if more than this fraction of the last BREAKER_WINDOW finished units failed (network down / api broken)
 BREAKER_WINDOW = 1000
 BREAKER_MAX_FAIL_FRAC = 0.02

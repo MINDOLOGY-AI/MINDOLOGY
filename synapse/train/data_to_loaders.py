@@ -127,7 +127,7 @@ class ReplayDataset(Dataset):
     # replay pool, of which a fresh ratio * n_main subset is drawn every epoch from (seed, epoch). train() calls set_epoch
     # before building each epoch's loader, so the draw is deterministic and resume-safe. every row must have the same shape,
     # so build main and pool into one dataset (e.g. one SFTDataset over both) before wrapping.
-    def __init__(self, dataset: Dataset, n_main: int, ratio: float, seed: int = 0):
+    def __init__(self, dataset: Dataset, n_main: int, ratio: float, seed: int = 21):
         n_pool = len(dataset) - n_main
         self.n_replay = int(round(ratio * n_main))
         assert 0 < n_main < len(dataset), f"n_main {n_main} must leave a non-empty pool in {len(dataset)} rows"

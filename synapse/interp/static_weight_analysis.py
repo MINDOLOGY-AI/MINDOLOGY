@@ -4,7 +4,7 @@
 import torch
 
 NUM_PAIRS = 3000
-SEED = 42
+SEED = 21
 COS_BINS = 20  # -1..1 in 0.1 divisions
 MAG_SIGMA_STEP = 0.5
 MAG_SIGMA_RANGE = 4

@@ -77,7 +77,7 @@ model: `f = topk_k(relu((x·s - b_dec) W_enc + b_enc))`, `x̂ = (f W_dec + b_dec
 - W_enc = W_decᵀ at init  
 - AuxK: features not fired in 10M tokens reconstruct the residual with their top 512, coeff 1/32  
 
-training: resid_post, groups of 4 SAEs per LM pass (forward stops after the deepest hooked layer), 1B tokens each from `olmo2_1b_interp_dataset_1b` (1.0B train / 140M eval, `datasteps/olmo2_1b_interp/resplit_1b.py`), 8192 tokens/step (122070 steps), Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32.  
+training: resid_post, groups of 4 SAEs per LM pass (forward stops after the deepest hooked layer), 1B tokens each from `olmo2_1b_interp_dataset` (128-token chunks shuffled with seed 21: first 1.0B tokens train, remaining ~140M eval, `datasteps/olmo2_1b_interp/tokenize_interp_dataset.py`), 8192 tokens/step (122070 steps), Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32, torch seed 21.  
 
 # Sae Eval  
 core eval (50 eval batches, 410k tokens), `x` = residual after layer i, `x̂` = SAE reconstruction:  
