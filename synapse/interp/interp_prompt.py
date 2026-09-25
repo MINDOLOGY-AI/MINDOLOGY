@@ -67,7 +67,7 @@ def parse_score_answer(text, n):
         part = part.strip()
         if not part:
             continue
-        if not part.isdigit() or not 1 <= int(part) <= n:
+        if not part.isdecimal() or not 1 <= int(part) <= n:
             return None
         said[int(part) - 1] = True
     return said
