@@ -91,7 +91,7 @@ outputs:
 - `weights/evoke/OlMo2_1b/sae_resid_topk/L<i>.pt`  
 - `results/OlMo2_1b/sae_resid_topk/`: `core.json` (`ce_clean`; per layer ce_sae, recon_err_pct, ce_increase_pct, l0, dead_frac_train, density_hist), `density/L<i>.density.bin` `(D,) float64`, `picks/`, `labels/`, `autointerp.json`, `summary.md`  
 
-result (old metrics, before re-eval): CE increase +3.0% (L0), +3.6% (L8), +19.1% (L15); ~0 dead.  
+result: recon err 13% (L0), 18–20% (L1–L12), 22–25% (L13–L15); CE increase +3–5% (L0–L11), rising to +19% at L15; ~0 dead. autointerp mean 0.65 (L0) → 0.72 (L2) → 0.75–0.77 (L3–L15), ≥0.7: 38% (L0) → 61–69% (L3–L15); vs MLP neurons 0.54.  
 
 # WCCs  
 
