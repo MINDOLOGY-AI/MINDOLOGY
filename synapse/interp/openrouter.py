@@ -18,6 +18,11 @@ RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 _client = None  # httpx.AsyncClient, built on first call so importing never needs the key
 
 
+class OpenRouterGaveUp(RuntimeError):
+    # every retry failed on a retryable error (network / 5xx / 429 / empty content); callers may record and move on
+    pass
+
+
 async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
     # messages: [{"role": "system"|"user", "content": str}] -> assistant text.
     # reasoning=False turns off thinking on reasoning models (else it silently eats max_tokens and content comes back None)
@@ -37,14 +42,17 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
     body = {"model": model, "messages": messages, "max_tokens": max_tokens, "reasoning": {"enabled": reasoning}}
     if temperature is not None:
         body["temperature"] = temperature
+    last = ""  # last retryable error, for the give-up message
     for attempt in range(MAX_RETRIES):
         try:
             r = await _client.post(URL, json=body)
         except httpx.TransportError as e:  # network hiccup / timeout: retry
+            last = type(e).__name__
             print(f"  openrouter transport error ({type(e).__name__}: {e}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
             await asyncio.sleep(random.uniform(0, min(2 ** attempt, MAX_BACKOFF_S)))
             continue
         if r.status_code in RETRY_STATUS:
+            last = f"http {r.status_code}"
             print(f"  openrouter {r.status_code}, retry {attempt + 1}/{MAX_RETRIES}", flush=True)
             await asyncio.sleep(random.uniform(0, min(2 ** attempt, MAX_BACKOFF_S)))
             continue
@@ -53,8 +61,9 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
         assert "choices" in data, f"openrouter response without choices: {str(data)[:500]}"
         content = data["choices"][0]["message"]["content"]
         if not content:  # provider flake (seen ~1 in 50): retry like a 5xx
+            last = "empty content"
             print(f"  openrouter empty content (finish={data['choices'][0].get('finish_reason')}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
             await asyncio.sleep(random.uniform(0, min(2 ** attempt, MAX_BACKOFF_S)))
             continue
         return content
-    raise RuntimeError(f"openrouter: gave up after {MAX_RETRIES} retries")
+    raise OpenRouterGaveUp(f"{last} after {MAX_RETRIES} retries")

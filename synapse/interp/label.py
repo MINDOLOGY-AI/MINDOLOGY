@@ -1,27 +1,36 @@
-# labels every unit of a picks dir (written by gather.gather_picks) with an llm, then scores each label by
+# labels every unit of a picks dir (written by picks.gather_picks) with an llm, then scores each label by
 # detection on held-out examples. see synapse/interp/DOC.md, "label pipeline". model-agnostic: needs only the
 # picks dir, the tokenizer that produced the source dataset, and an openrouter model name.
 
 import asyncio
 import json
+from collections import deque
 from pathlib import Path
 
 import numpy as np
 
-from synapse.interp.openrouter import chat
+from synapse.interp.openrouter import chat, OpenRouterGaveUp
 from synapse.interp.interp_prompt import (render_window, generate_messages, score_messages, parse_score_answer,
                                           GENERATE_MAX_TOKENS)
 
 FIRE_PERCENTILE = 99  # a random window "fires" if any token exceeds the unit's value at this percentile
 SEED = 0
+# circuit breaker: abort if more than this fraction of the last BREAKER_WINDOW finished units failed (network down / api broken)
+BREAKER_WINDOW = 1000
+BREAKER_MAX_FAIL_FRAC = 0.02
 
 
-async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, units=None, unit_word="neuron"):
+async def label_units(picks_dir, labels_dir, tokenizer, model, hook_names, workers=200, units=None, unit_word="neuron"):
+    # writes <labels_dir>/<hook>.jsonl (one line per labeled unit, appended) and <labels_dir>/errors.json
+    # (units whose api calls exhausted every retry this run; they are not in the jsonl, so a rerun retries them).
+    # returns the number of failed units.
     # unit_word: what the prompts call a unit ("neuron" for MLP neurons, "feature" for SAE features)
     # units: optional {hook_name: [unit ids]} to label a subset instead of every unit
     # workers: max units in flight at once (a unit holds its slot across both of its calls, otherwise the
     # fifo semaphore would queue every second call behind all 131k first calls and nothing completes for ages)
     picks_dir = Path(picks_dir)
+    labels_dir = Path(labels_dir)
+    labels_dir.mkdir(parents=True, exist_ok=True)
     meta = json.loads((picks_dir / "meta.json").read_text())
     n_chunks, L = meta["n_chunks"], meta["context_chunk_size"]
     wb, wa = meta["window_before"], meta["window_after"]
@@ -50,7 +59,7 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, unit
             "rand_win": np.fromfile(picks_dir / f"{name}.random_windows.bin", dtype=np.float16).reshape(d, n_random, W).astype(np.float32),
             "quant": np.fromfile(picks_dir / f"{name}.quantiles.bin", dtype=np.float16).reshape(d, meta["n_quantiles"]).astype(np.float32),
         }
-        out_path = picks_dir / f"{name}.labels.jsonl"
+        out_path = labels_dir / f"{name}.jsonl"
         done = {json.loads(line)["unit"] for line in out_path.read_text().splitlines()} if out_path.exists() else set()  # {int}
         todo += [(name, u) for u in (units[name] if units else range(d)) if u not in done]
         print(f"{name}: {len([1 for n, _ in todo if n == name])} units to label ({len(done)} already done)", flush=True)
@@ -65,7 +74,10 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, unit
             return name, {"unit": u, "label": None, "score": None, "reason": "no positive activation"}
         rng = np.random.default_rng(SEED + u)
         async with sem:
-            return name, await _label_unit(name, u, unit_max, rng)
+            try:
+                return name, await _label_unit(name, u, unit_max, rng)
+            except OpenRouterGaveUp as e:
+                return name, {"unit": u, "error": str(e)}
 
     async def _label_unit(name, u, unit_max, rng):
         h = data[name]
@@ -105,13 +117,28 @@ async def label_units(picks_dir, tokenizer, model, hook_names, workers=200, unit
                 "raw": {"label": raw_label, "test": raw_test}}
 
     # {name: open jsonl handle}, appended from the main thread as futures complete
-    files = {name: open(picks_dir / f"{name}.labels.jsonl", "a") for name in hook_names}
+    files = {name: open(labels_dir / f"{name}.jsonl", "a") for name in hook_names}
+    failed = []  # [{"hook": str, "unit": int, "error": str}]
+    recent = deque(maxlen=BREAKER_WINDOW)  # [bool] failed?, last BREAKER_WINDOW finished units
+
+    def write_errors():
+        (labels_dir / "errors.json").write_text(json.dumps({"n_failed": len(failed), "failed": failed}, indent=1))
+
     tasks = [asyncio.create_task(label_one(name, u)) for name, u in todo]
     for i, fut in enumerate(asyncio.as_completed(tasks), 1):
         name, rec = await fut
-        files[name].write(json.dumps(rec, ensure_ascii=False) + "\n")
-        files[name].flush()
+        recent.append("error" in rec)
+        if "error" in rec:
+            failed.append({"hook": name, **rec})
+            if len(recent) == BREAKER_WINDOW and sum(recent) > BREAKER_MAX_FAIL_FRAC * BREAKER_WINDOW:
+                write_errors()
+                raise RuntimeError(f"{sum(recent)}/{BREAKER_WINDOW} recent units failed, api/network down: {rec['error']}")
+        else:
+            files[name].write(json.dumps(rec, ensure_ascii=False) + "\n")
+            files[name].flush()
         if i % 500 == 0 or i == len(tasks):
-            print(f"  {i}/{len(tasks)} units done", flush=True)
+            print(f"  {i}/{len(tasks)} units done, {len(failed)} failed", flush=True)
     for f in files.values():
         f.close()
+    write_errors()
+    return len(failed)

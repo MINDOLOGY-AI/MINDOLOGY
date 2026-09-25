@@ -7,10 +7,10 @@ from pathlib import Path
 
 from evoke.OlMo2_1b.run.loader import build_model_and_tokenizer
 from evoke.OlMo2_1b.interp.hooked_olmo import HookedOlmo
-from synapse.interp.gather import gather_picks
+from synapse.interp.picks import gather_picks
 
 BIN_DIR = Path.cwd() / "data" / "datasteps" / "tokenized" / "olmo2_1b_interp_dataset"
-OUT_DIR = Path.cwd() / "results" / "OlMo2_1b" / "mlp_dynamic"
+OUT_DIR = Path.cwd() / "results" / "OlMo2_1b" / "mlp_dynamic" / "picks"
 N_CHUNKS = 1600  # 1600 * 128 = 204,800 tokens
 BATCH_CHUNKS = 8
 HOOK_NAMES = [f"post_gate.{i}" for i in range(16)]

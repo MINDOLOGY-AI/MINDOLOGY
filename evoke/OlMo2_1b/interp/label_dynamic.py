@@ -7,14 +7,16 @@ from pathlib import Path
 from evoke.OlMo2_1b.run.loader import load_olmo2_tokenizer
 from synapse.interp.label import label_units
 
-PICKS_DIR = Path.cwd() / "results" / "OlMo2_1b" / "mlp_dynamic"
+PICKS_DIR = Path.cwd() / "results" / "OlMo2_1b" / "mlp_dynamic" / "picks"
+LABELS_DIR = Path.cwd() / "results" / "OlMo2_1b" / "mlp_dynamic" / "labels"
 MODEL = "deepseek/deepseek-v4-flash-0731"
 HOOK_NAMES = [f"post_gate.{i}" for i in range(16)]
 WORKERS = 200  # concurrent units; lower if openrouter starts returning 429s
 
 
 def main():
-    asyncio.run(label_units(PICKS_DIR, load_olmo2_tokenizer(), MODEL, HOOK_NAMES, workers=WORKERS))
+    n_failed = asyncio.run(label_units(PICKS_DIR, LABELS_DIR, load_olmo2_tokenizer(), MODEL, HOOK_NAMES, workers=WORKERS))
+    assert n_failed == 0, f"{n_failed} units failed labeling, see {LABELS_DIR / 'errors.json'}; rerun to retry them"
 
 
 if __name__ == "__main__":
