@@ -1,5 +1,9 @@
 port the openmindfab CLI here. unify a serving function.  
 
+- READ THE CODE
+
+- Fix Up Labeling Prompt
+
 SAE retrain "properly" (`evoke/OlMo2_1b/interp/sae_resid_topk.py`):  
 - re-split interp dataset: ~1.0B train / ~140M eval (now 799M / 341M; same shuffled mix, only 100M of train was used)  
 - TRAIN_TOKENS 100M -> 1B (current L8 expl_var still rising at 100M: 0.741 @50M -> 0.750 @100M)  

@@ -16,7 +16,9 @@ def simple_train(
     eval_dataset = None,
     eval_batch_size = None,
     max_steps = None,
+    scheduler = None,
 ):
+    # scheduler: optional torch lr scheduler, stepped once per optimizer step
     model.cuda()
     model.train()
     if eval_batch_size is None:
@@ -43,6 +45,8 @@ def simple_train(
             loss.backward()
             torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=1.0)
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
             global_step += 1
 
             if (cur_batch_num + 1) % batches_per_log == 0:
@@ -72,7 +76,7 @@ def simple_train(
 
                 train_helpers.log_batch(start_time, cur_epoch, cur_batch_num, epochs, len(train_dataloader), losses, global_step=global_step, max_steps=max_steps)
             if (cur_batch_num + 1) % batches_per_save == 0:
-                train_helpers.save_checkpoint(save_path, model, optimizer, None, cur_epoch, cur_batch_num, losses)
+                train_helpers.save_checkpoint(save_path, model, optimizer, scheduler, cur_epoch, cur_batch_num, losses)
                 losses = {k: [] for k in losses}
             if max_steps is not None and global_step >= max_steps:
                 return

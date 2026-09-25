@@ -1,13 +1,15 @@
 # prompt text + rendering + answer parsing for unit labeling (see synapse/interp/DOC.md, label pipeline).
-# generation and detection-scoring prompts follow SAEBench's autointerp, adapted to numeric per-token marks.
+# generation and detection-scoring prompts follow SAEBench's autointerp.
+
+import codecs
 
 GENERATE_SYSTEM = (
     "We're studying {unit}s in a neural network. Each {unit} activates on some particular word/words/substring/"
-    "concept in a short document. In each document every token is followed by the {unit}'s activation on that "
-    "token, from 0 (off) to 10 (the {unit}'s maximum), like this: the<0> cat<7>. We will give you a list of "
+    "concept in a short document. The activating words in each document are indicated with << ... >>. We will "
+    "give you a list of "
     "documents on which the {unit} activates, in order from most strongly activating to least strongly activating. "
     "Look at the parts of the document the {unit} activates for and summarize in a single sentence what the {unit} "
-    "is activating on. Try not to be overly specific in your explanation. Note that some {unit}s will activate only "
+    "is activating on. Be as specific as possible while still covering most of the activating examples. Note that some {unit}s will activate only "
     "on specific words or substrings, but others will activate on most/all words in a sentence provided that "
     "sentence contains some particular concept. Your explanation should cover most or all activating words (for "
     "example, don't give an explanation which is specific to a single word if all words in a sentence cause the "
@@ -33,10 +35,29 @@ SCORE_SYSTEM = (
 GENERATE_MAX_TOKENS = 60
 
 
-def render_window(token_strs, strengths=None):
-    # token_strs: [str] one per token; strengths: [int] 0..10 per token, or None for an unmarked window
-    parts = token_strs if strengths is None else [f"{t}<{s}>" for t, s in zip(token_strs, strengths)]
-    return "".join(parts).replace("�", "").replace("\n", "↵")
+def render_window(token_bytes, active=None):
+    # token_bytes: [bytes] raw utf-8 bytes per token; active: [bool] per token, or None for an unmarked window.
+    # active pieces are wrapped as <<piece>>. byte-level BPE splits multi-byte characters across tokens, so tokens
+    # are merged into pieces that end on a character boundary; a piece is active if any of its tokens is.
+    # partial characters at the window edges are cut.
+    dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    pieces = []  # [(str, bool)] whole-character text per piece, and whether it is active
+    text = ""  # decoded text of the tokens in the current piece
+    pending = []  # [bool] active flags of the tokens in the current piece
+    at_start = True  # still inside continuation bytes (0b10xxxxxx) of a character that began before the window
+    for j, b in enumerate(token_bytes):
+        if at_start:
+            b = b.lstrip(bytes(range(0x80, 0xC0)))
+            if not b:
+                continue
+            at_start = False
+        text += dec.decode(b)
+        pending.append(active is not None and active[j])
+        # a piece ends where a token ends on a character boundary (no bytes left buffered in the decoder)
+        if not dec.getstate()[0]:
+            pieces.append((text, any(pending)))
+            text, pending = "", []
+    return "".join(f"<<{t}>>" if a else t for t, a in pieces).replace("\n", "↵")
 
 
 def generate_messages(rendered, unit="neuron"):
@@ -49,7 +70,7 @@ def generate_messages(rendered, unit="neuron"):
 
 
 def score_messages(label, rendered, unit="neuron"):
-    # rendered: [str] test windows without strengths, already shuffled
+    # rendered: [str] test windows without marks, already shuffled
     n = len(rendered)
     demo = ", ".join(str(i) for i in sorted({1, n // 3, n // 2 + 1, n}))
     docs = "\n".join(f"{i + 1}. {r}" for i, r in enumerate(rendered))

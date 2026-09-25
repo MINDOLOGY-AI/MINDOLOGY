@@ -1,8 +1,8 @@
-# TopK SAEs (k=64, 16x) on OlMo2-1B resid_post at all 16 layers, then core bench per layer, picks for every
+# TopK SAEs (k=64, 16x) on OlMo2-1B resid_post, 1B training tokens each, then core bench per layer, picks for every
 # feature, and labels + detection scores for every feature. every phase resumes from what is already on disk.
 # run from repo root: python -m evoke.OlMo2_1b.interp.sae_resid_topk
-# outputs: weights/evoke/OlMo2_1b/sae_resid_topk/L<i>.pt
-#          results/OlMo2_1b/sae_resid_topk/{core.json, density/, picks/, labels/, autointerp.json, summary.md}
+# outputs: weights/evoke/OlMo2_1b/sae_resid_topk_1bTok/L<i>.pt
+#          results/OlMo2_1b/sae_resid_topk_1bTok/{core.json, density/, picks/, labels/, autointerp.json, summary.md}
 
 import asyncio
 import json
@@ -21,17 +21,18 @@ from synapse.probes.sae.TopKSAE import TopKSAE
 from synapse.train.data_to_loaders import BinUnsupervisedDataset, dataset_to_dataloader
 from synapse.train.simple_train import simple_train, _to_cuda
 
-BIN_DIR = Path.cwd() / "data" / "datasteps" / "tokenized" / "olmo2_1b_interp_dataset"
-WEIGHTS_DIR = Path.cwd() / "weights" / "evoke" / "OlMo2_1b" / "sae_resid_topk"
-RESULTS_DIR = Path.cwd() / "results" / "OlMo2_1b" / "sae_resid_topk"
+BIN_DIR = Path.cwd() / "data" / "datasteps" / "tokenized" / "olmo2_1b_interp_dataset_1b"
+WEIGHTS_DIR = Path.cwd() / "weights" / "evoke" / "OlMo2_1b" / "sae_resid_topk_1bTok"
+RESULTS_DIR = Path.cwd() / "results" / "OlMo2_1b" / "sae_resid_topk_1bTok"
 LAYERS = list(range(16))
 GROUP_SIZE = 4  # SAEs trained together in one LM pass; 16 at once does not fit 32GB with adam state
 D_IN = 2048
 EXPANSION = 16
 K = 64
-TRAIN_TOKENS = 100_000_000
+TRAIN_TOKENS = 1_000_000_000
 BATCH_CHUNKS = 64  # x 128 = 8192 tokens per step
 LR = 3e-4
+LR_DECAY_FRAC = 0.2  # lr constant, then linear to 0 over this final fraction of steps (dictionary_learning TopK recipe)
 EVAL_BATCHES = 50
 PICK_CHUNKS = 16000  # x 128 = 2.05M tokens
 PICK_BATCH_CHUNKS = 8
@@ -51,7 +52,7 @@ def train_group(lm, layers, expansion, train_ds, eval_ds, train_tokens, batch_ch
     norms = {i: 0.0 for i in layers}  # {layer: mean resid norm}
     with torch.no_grad():
         for _ in range(4):
-            trainer.lm(input_ids=_to_cuda(next(dl)))
+            trainer.run(_to_cuda(next(dl)))
             for i in layers:
                 norms[i] += trainer._acts[i].float().norm(dim=-1).mean().item() / 4
     for i in layers:
@@ -62,8 +63,12 @@ def train_group(lm, layers, expansion, train_ds, eval_ds, train_tokens, batch_ch
     group_dir = weights_dir / f"group_L{layers[0]}-L{layers[-1]}"
     group_dir.mkdir(parents=True, exist_ok=True)
     opt = torch.optim.Adam(trainer.parameters(), lr=LR)
+    max_steps = train_tokens // (batch_chunks * chunk_size)
+    decay_start = int(max_steps * (1 - LR_DECAY_FRAC))
+    # lr multiplier per step: 1 until decay_start, then linear down to 0 at max_steps
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: min(1.0, (max_steps - step) / (max_steps - decay_start)))
     simple_train(trainer, train_ds, batch_chunks, opt, epochs=1, save_path=str(group_dir), batches_per_log=200,
-                 batches_per_save=2000, eval_dataset=eval_ds, max_steps=train_tokens // (batch_chunks * chunk_size))
+                 batches_per_save=2000, eval_dataset=eval_ds, max_steps=max_steps, scheduler=sched)
     trainer.remove_hooks()
     for i in layers:
         torch.save(saes[i].state_dict(), weights_dir / f"L{i}.pt")
@@ -171,7 +176,7 @@ def main(layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens
         core["ce_clean"] = c["ce_clean"]
         core["density_bins"] = c["density_bins"]
         core["saes"].update(c["saes"])
-        core["config"] = {"k": K, "expansion": expansion, "train_tokens": train_tokens, "lr": LR, "group_size": group_size,
+        core["config"] = {"k": K, "expansion": expansion, "train_tokens": train_tokens, "lr": LR, "lr_decay_frac": LR_DECAY_FRAC, "group_size": group_size,
                           "eval_tokens": eval_batches * batch_chunks * meta["chunk_size"]}
         core_path.write_text(json.dumps(core, indent=2))
         print(json.dumps({n: core["saes"][n] for n in (names[i] for i in group)}, indent=2), flush=True)
@@ -217,7 +222,7 @@ def main(layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens
                        "|---|---|---|---|---|---|---|---|---|", *rows])
     (results_dir / "summary.md").write_text(
         f"# TopK SAEs (k={K}, {expansion}x) on OlMo2-1B resid_post, all layers\n\n"
-        f"train {train_tokens:,} tokens per SAE, lr {LR}, groups of {group_size}. picks over {pick_chunks * meta['chunk_size']:,} tokens. "
+        f"train {train_tokens:,} tokens per SAE, lr {LR} (linear decay over the last {LR_DECAY_FRAC:.0%}), groups of {group_size}. picks over {pick_chunks * meta['chunk_size']:,} tokens. "
         f"labeler {MODEL}. clean CE {core['ce_clean']:.3f}.\n\n{table}\n")
     print(table, flush=True)
 

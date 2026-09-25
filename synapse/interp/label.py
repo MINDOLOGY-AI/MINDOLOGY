@@ -8,11 +8,13 @@ from collections import deque
 from pathlib import Path
 
 import numpy as np
+from transformers.convert_slow_tokenizer import bytes_to_unicode
 
 from synapse.interp.openrouter import chat, OpenRouterGaveUp
 from synapse.interp.interp_prompt import (render_window, generate_messages, score_messages, parse_score_answer,
                                           GENERATE_MAX_TOKENS)
 
+ACT_THRESHOLD_FRAC = 0.01  # a token is marked <<active>> in label windows if its activation > this * the unit's max
 FIRE_PERCENTILE = 99  # a random window "fires" if any token exceeds the unit's value at this percentile
 SEED = 0
 # circuit breaker: abort if more than this fraction of the last BREAKER_WINDOW finished units failed (network down / api broken)
@@ -38,8 +40,10 @@ async def label_units(picks_dir, labels_dir, tokenizer, model, hook_names, worke
     top_k, iw_k, n_random = meta["top_k"], meta["iw_k"], meta["n_random"]
     # (n_chunks, L) token ids of the chunks the picks index into (a prefix of the source .bin)
     tokens = np.memmap(meta["source_dataset"], dtype=np.int32, mode="r", shape=(n_chunks, L))
-    # [str] display string per token id, decoded one at a time so leading spaces survive
-    vocab = [tokenizer.decode([i]) for i in range(len(tokenizer))]
+    # {byte-level BPE char: byte}, inverse of the tokenizer's byte -> printable-char map
+    byte_of = {c: b for b, c in bytes_to_unicode().items()}
+    # [bytes] raw utf-8 bytes per token id (a token can hold part of a multi-byte character)
+    token_bytes = [bytes(byte_of[c] for c in tokenizer.convert_ids_to_tokens(i)) for i in range(len(tokenizer))]
     # slots used for the label prompt vs held out for the test (first half of each of top-k and iw)
     label_slots = list(range(top_k // 2)) + list(range(top_k, top_k + iw_k // 2))
     test_slots = list(range(top_k // 2, top_k)) + list(range(top_k + iw_k // 2, top_k + iw_k))
@@ -84,9 +88,8 @@ async def label_units(picks_dir, labels_dir, tokenizer, model, hook_names, worke
         pick_chunk, pick_pos, windows = h["pick_chunk"], h["pick_pos"], h["windows"]
 
         def text(c, p, win, marked):
-            strs = [vocab[i] for i in tokens[c, p - wb:p + wa + 1]]
-            strengths = np.round(np.clip(win, 0, None) / unit_max * 10).astype(int).tolist() if marked else None
-            return render_window(strs, strengths)
+            window_bytes = [token_bytes[i] for i in tokens[c, p - wb:p + wa + 1]]
+            return render_window(window_bytes, (win > ACT_THRESHOLD_FRAC * unit_max).tolist() if marked else None)
 
         # label prompt: valid label slots, strongest first (slots are already ordered within top-k / iw)
         lab = [s for s in label_slots if pick_chunk[u, s] >= 0]

@@ -34,7 +34,7 @@ patterns of activation changes? what areas get mapped to what?
 # label
 `label.py` (prompts `interp_prompt.py`, api `openrouter.py`). SAEBench autointerp, 2 llm calls per unit. same code for MLP neurons and SAE features; prompts say `neuron` or `feature`.  
 
-**label call** — 10 top-k + 10 iw (slots 0..9, 20..29), strongest first, each token marked with activation 0-10 relative to the unit's max (top-k slot 0): `the<0> cat<7>`, `\n` → `↵`. SAEBench system prompt; answer = text after "activates on", ≤ 20 words.  
+**label call** — 10 top-k + 10 iw (slots 0..9, 20..29), strongest first, SAEBench marking: a piece is wrapped `<<like this>>` if its activation > 1% of the unit's max (top-k slot 0), `\n` → `↵`. a piece = one token, or consecutive tokens merged until they end on a character boundary (byte-level BPE splits multi-byte characters). SAEBench-based system prompt; answer = text after "activates on", ≤ 20 words.  
 
 **test call** — held-out 10 top-k + 10 iw (slots 10..19, 30..39) + 20 random, unmarked, shuffled. llm gets the label, answers which examples fire (comma-separated numbers / "None"). truth: held-out picks fire; a random window fires iff any token > the unit's p99. **score = balanced accuracy**, chance 0.5.  
 
@@ -77,7 +77,7 @@ model: `f = topk_k(relu((x·s - b_dec) W_enc + b_enc))`, `x̂ = (f W_dec + b_dec
 - W_enc = W_decᵀ at init  
 - AuxK: features not fired in 10M tokens reconstruct the residual with their top 512, coeff 1/32  
 
-training: resid_post of all 16 layers, groups of 4 SAEs per LM pass, 100M tokens each, 8192 tokens/step (12207 steps), Adam lr 3e-4, tf32.  
+training: resid_post, groups of 4 SAEs per LM pass (forward stops after the deepest hooked layer), 1B tokens each from `olmo2_1b_interp_dataset_1b` (1.0B train / 140M eval, `datasteps/olmo2_1b_interp/resplit_1b.py`), 8192 tokens/step (122070 steps), Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32.  
 
 # Sae Eval  
 core eval (50 eval batches, 410k tokens), `x` = residual after layer i, `x̂` = SAE reconstruction:  
@@ -88,10 +88,10 @@ core eval (50 eval batches, 410k tokens), `x` = residual after layer i, `x̂` = 
 then picks over 2.05M tokens and labels for every feature (see label).  
 
 outputs:  
-- `weights/evoke/OlMo2_1b/sae_resid_topk/L<i>.pt`  
-- `results/OlMo2_1b/sae_resid_topk/`: `core.json` (`ce_clean`; per layer ce_sae, recon_err_pct, ce_increase_pct, l0, dead_frac_train, density_hist), `density/L<i>.density.bin` `(D,) float64`, `picks/`, `labels/`, `autointerp.json`, `summary.md`  
+- `weights/evoke/OlMo2_1b/sae_resid_topk_1bTok/L<i>.pt`  
+- `results/OlMo2_1b/sae_resid_topk_1bTok/`: `core.json` (`ce_clean`; per layer ce_sae, recon_err_pct, ce_increase_pct, l0, dead_frac_train, density_hist), `density/L<i>.density.bin` `(D,) float64`, `picks/`, `labels/`, `autointerp.json`, `summary.md`  
 
-result: recon err 13% (L0), 18–20% (L1–L12), 22–25% (L13–L15); CE increase +3–5% (L0–L11), rising to +19% at L15; ~0 dead. autointerp mean 0.65 (L0) → 0.72 (L2) → 0.75–0.77 (L3–L15), ≥0.7: 38% (L0) → 61–69% (L3–L15); vs MLP neurons 0.54.  
+result, 100M-token run (all 16 layers, constant lr, `results/OlMo2_1b/sae_resid_topk/`): recon err 13% (L0), 18–20% (L1–L12), 22–25% (L13–L15); CE increase +3–5% (L0–L11), rising to +19% at L15; ~0 dead. autointerp mean 0.65 (L0) → 0.72 (L2) → 0.75–0.77 (L3–L15), ≥0.7: 38% (L0) → 61–69% (L3–L15); vs MLP neurons 0.54.  
 
 # WCCs  
 

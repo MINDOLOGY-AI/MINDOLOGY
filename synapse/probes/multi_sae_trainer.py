@@ -6,6 +6,11 @@ import torch
 import torch.nn as nn
 
 
+class _StopForward(Exception):
+    # raised by the deepest capture hook: layers past the last hooked one are never run
+    pass
+
+
 class MultiSAETrainer(nn.Module):
     def __init__(self, inner_lm, saes):
         # inner_lm: callable with input_ids=, must expose .layers (block modules)
@@ -33,11 +38,20 @@ class MultiSAETrainer(nn.Module):
     def _make_capture(self, layer_idx):
         def capture(module, input, output):
             self._acts[layer_idx] = output[0].detach()  # (B, seq, d_model)
+            if layer_idx == max(self.layer_indices):
+                raise _StopForward
         return capture
 
-    def compute_loss(self, token_chunk):
+    def run(self, token_chunk):
+        # LM forward up to the deepest hooked layer; fills self._acts {layer_idx: (B, seq, d_model)}
         with torch.no_grad():
-            self.lm(input_ids=token_chunk)
+            try:
+                self.lm(input_ids=token_chunk)
+            except _StopForward:
+                pass
+
+    def compute_loss(self, token_chunk):
+        self.run(token_chunk)
         total = 0.0
         metrics = {}
         for i in self.layer_indices:
