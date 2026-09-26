@@ -23,8 +23,10 @@ class OpenRouterGaveUp(RuntimeError):
     pass
 
 
-async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
-    # messages: [{"role": "system"|"user", "content": str}] -> assistant text.
+async def chat(messages, model, max_tokens, temperature=None, reasoning=False, tools=None):
+    # messages: [{"role": "system"|"user"|"assistant"|"tool", ...}] -> the assistant message dict
+    # ({"role": "assistant", "content": str | None, "tool_calls": [...] when it called tools}).
+    # tools: openai-format tool definitions [{"type": "function", "function": {name, description, parameters}}]
     # reasoning=False turns off thinking on reasoning models (else it silently eats max_tokens and content comes back None)
     global _client
     if _client is None:
@@ -42,6 +44,8 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
     body = {"model": model, "messages": messages, "max_tokens": max_tokens, "reasoning": {"enabled": reasoning}}
     if temperature is not None:
         body["temperature"] = temperature
+    if tools is not None:
+        body["tools"] = tools
     last = ""  # last retryable error, for the give-up message
     for attempt in range(MAX_RETRIES):
         try:
@@ -59,11 +63,11 @@ async def chat(messages, model, max_tokens, temperature=None, reasoning=False):
         assert r.status_code == 200, f"openrouter {r.status_code}: {r.text[:500]}"
         data = r.json()
         assert "choices" in data, f"openrouter response without choices: {str(data)[:500]}"
-        content = data["choices"][0]["message"]["content"]
-        if not content:  # provider flake (seen ~1 in 50): retry like a 5xx
+        message = data["choices"][0]["message"]
+        if not message.get("content") and not message.get("tool_calls"):  # provider flake (seen ~1 in 50): retry like a 5xx
             last = "empty content"
             print(f"  openrouter empty content (finish={data['choices'][0].get('finish_reason')}), retry {attempt + 1}/{MAX_RETRIES}", flush=True)
             await asyncio.sleep(random.uniform(0, min(2 ** attempt, MAX_BACKOFF_S)))
             continue
-        return content
+        return message
     raise OpenRouterGaveUp(f"{last} after {MAX_RETRIES} retries")

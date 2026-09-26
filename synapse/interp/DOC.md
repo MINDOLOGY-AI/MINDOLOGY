@@ -75,7 +75,8 @@ model: `f = topk_k(relu((x·s - b_dec) W_enc + b_enc))`, `x̂ = (f W_dec + b_dec
 - `s` = norm_factor, per layer so mean ‖x·s‖ = √2048 (from 4 batches)  
 - decoder rows unit norm (renormed every step)
 - W_enc = W_decᵀ at init  
-- AuxK: features not fired in 10M tokens reconstruct the residual with their top 512, coeff 1/32  
+- `b_dec` is subtracted before encoding (features encode deviations from it), `b_enc` is a per-feature threshold shift  
+- AuxK (Gao et al.): dead = not fired on any token for 10M tokens (per-feature counter, reset when it fires in a batch). per token, the 512 dead features with the highest pre-activation reconstruct the residual `x - x̂` (detached); `aux_loss = 1/32 · ‖f_aux W_dec - (x - x̂)‖²`. training loss only: `x̂` always uses the 64 TopK winners  
 
 training: resid_post, groups of 4 SAEs per LM pass (forward stops after the deepest hooked layer), 1B tokens each from `olmo2_1b_interp_dataset` (128-token chunks shuffled with seed 21: first 1.0B tokens train, remaining ~140M eval, `datasteps/olmo2_1b_interp/tokenize_interp_dataset.py`), 8192 tokens/step (122070 steps), Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32, torch seed 21.  
 
@@ -93,6 +94,11 @@ outputs:
 
 result, 1B-token L8 (`results/OlMo2_1b/sae_resid_topk_1bTok/compare_L8/`, same eval batches as the 100M L8): recon err 18.3% vs 19.4%, CE increase +2.8% vs +3.5%, density within 10× of ideal 73% vs 68%, rare (<ideal/10) 26% vs 31%, never fired on eval 1.6% vs 0.3%.  
 result, 100M-token run (all 16 layers, constant lr, `results/OlMo2_1b/sae_resid_topk/`): recon err 13% (L0), 18–20% (L1–L12), 22–25% (L13–L15); CE increase +3–5% (L0–L11), rising to +19% at L15; ~0 dead. autointerp mean 0.65 (L0) → 0.72 (L2) → 0.75–0.77 (L3–L15), ≥0.7: 38% (L0) → 61–69% (L3–L15); vs MLP neurons 0.54.  
+
+## feature groups
+`synapse/interp/grouping.py`, pilot `evoke/OlMo2_1b/interp/group_features.py` (2000 random L8 features with a label and density >= 1e-5, seed 21).  
+per batch of 20: the llm (`deepseek/deepseek-v4-flash-0731`, openrouter tool calling) sees every existing group (`gid: name — desc (n members)`) and the batch's labels, calls `create_group(name, description)` (several at once) and `assign(group_id, feature_ids)` until every feature is in a group. prompt asks for specific groups ("lizards", not "animals"), many groups expected.  
+output `results/OlMo2_1b/sae_resid_topk/groups_pilot_L8/`: `groups.json` = `{"sae_id", "groups": {gid: {"name", "desc"}}, "assign": {"L8:123": gid}}`, `log.jsonl` (every llm turn per batch), `report.md` (groups by size with member labels; decoder coherence = mean pairwise cosine of member decoder rows vs random pairs).  
 
 # WCCs  
 

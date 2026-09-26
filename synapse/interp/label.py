@@ -94,8 +94,8 @@ async def label_units(picks_dir, labels_dir, tokenizer, model, hook_names, worke
         # label prompt: valid label slots, strongest first (slots are already ordered within top-k / iw)
         lab = [s for s in label_slots if pick_chunk[u, s] >= 0]
         lab.sort(key=lambda s: -windows[u, s, wb])
-        raw_label = await chat(generate_messages([text(pick_chunk[u, s], pick_pos[u, s], windows[u, s], True) for s in lab], unit_word),
-                               model, GENERATE_MAX_TOKENS)
+        raw_label = (await chat(generate_messages([text(pick_chunk[u, s], pick_pos[u, s], windows[u, s], True) for s in lab], unit_word),
+                                model, GENERATE_MAX_TOKENS))["content"]
         label = raw_label.split("activates on")[-1].rstrip(".").strip()
 
         # test set: held-out picks (fire by construction) + random windows (fire iff any token > p99)
@@ -105,7 +105,7 @@ async def label_units(picks_dir, labels_dir, tokenizer, model, hook_names, worke
         rng.shuffle(items)
         rendered = [text(pick_chunk[u, s], pick_pos[u, s], None, False) if kind == "pick"
                     else text(h["rand_chunk"][u, s], h["rand_pos"][u, s], None, False) for (kind, s), _ in items]
-        raw_test = await chat(score_messages(label, rendered, unit_word), model, 2 * len(items) + 5)
+        raw_test = (await chat(score_messages(label, rendered, unit_word), model, 2 * len(items) + 5))["content"]
         said = parse_score_answer(raw_test, len(items))
         truth = [t for _, t in items]
         if said is None:
