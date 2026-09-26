@@ -100,6 +100,11 @@ result, 100M-token run (all 16 layers, constant lr, `results/OlMo2_1b/sae_resid_
 per batch of 20: the llm (`deepseek/deepseek-v4-flash-0731`, openrouter tool calling) sees every existing group (`gid: name — desc (n members)`) and the batch's labels, calls `create_group(name, description)` (several at once) and `assign(group_id, feature_ids)` until every feature is in a group. prompt asks for specific groups ("lizards", not "animals"), many groups expected.  
 output `results/OlMo2_1b/sae_resid_topk/groups_pilot_L8/`: `groups.json` = `{"sae_id", "groups": {gid: {"name", "desc"}}, "assign": {"L8:123": gid}}`, `log.jsonl` (every llm turn per batch), `report.md` (groups by size with member labels; decoder coherence = mean pairwise cosine of member decoder rows vs random pairs).  
 
+## feature groups
+`synapse/interp/grouping.py`, run `evoke/OlMo2_1b/interp/group_features.py`: every labeled L8 feature with density >= 1e-5 (32074), shuffled with seed 21.  
+per batch of 64: the llm (`deepseek/deepseek-v4-flash-0731`, openrouter tool calling) sees every existing group (`gid: name (n members)`) and the batch's labels, calls `create_group(name)` (several at once) and `assign(group_id, feature_ids)` until every feature is in a group. a group is only its name: 5-15 words, label-level specific ("lizards", not "animals"); many groups expected.  
+output `results/OlMo2_1b/sae_resid_topk/groups_L8/` (rewritten every 20 batches): `groups.json` = `{"sae_id", "groups": {gid: name}, "assign": {"L8:123": gid}}`, `log.jsonl` (every llm turn per batch), `report.md` (groups by size with member labels; decoder coherence = mean pairwise cosine of member decoder rows vs random pairs).  
+
 # WCCs  
 
 # to be decided:  
