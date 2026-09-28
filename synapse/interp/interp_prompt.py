@@ -35,15 +35,14 @@ SCORE_SYSTEM = (
 GENERATE_MAX_TOKENS = 60
 
 
-def render_window(token_bytes, active=None):
-    # token_bytes: [bytes] raw utf-8 bytes per token; active: [bool] per token, or None for an unmarked window.
-    # active pieces are wrapped as <<piece>>. byte-level BPE splits multi-byte characters across tokens, so tokens
-    # are merged into pieces that end on a character boundary; a piece is active if any of its tokens is.
-    # partial characters at the window edges are cut.
+def window_pieces(token_bytes):
+    # token_bytes: [bytes] raw utf-8 bytes per token of a window -> [(str, [int])] pieces: whole-character text and
+    # the window positions of its tokens. byte-level BPE splits multi-byte characters across tokens, so tokens are
+    # merged into pieces that end on a character boundary. partial characters at the window edges are cut.
     dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    pieces = []  # [(str, bool)] whole-character text per piece, and whether it is active
+    pieces = []  # [(str, [int])]
     text = ""  # decoded text of the tokens in the current piece
-    pending = []  # [bool] active flags of the tokens in the current piece
+    pending = []  # [int] window positions of the tokens in the current piece
     at_start = True  # still inside continuation bytes (0b10xxxxxx) of a character that began before the window
     for j, b in enumerate(token_bytes):
         if at_start:
@@ -52,12 +51,19 @@ def render_window(token_bytes, active=None):
                 continue
             at_start = False
         text += dec.decode(b)
-        pending.append(active is not None and active[j])
+        pending.append(j)
         # a piece ends where a token ends on a character boundary (no bytes left buffered in the decoder)
         if not dec.getstate()[0]:
-            pieces.append((text, any(pending)))
+            pieces.append((text, pending))
             text, pending = "", []
-    return "".join(f"<<{t}>>" if a else t for t, a in pieces).replace("\n", "↵")
+    return pieces
+
+
+def render_window(token_bytes, active=None):
+    # token_bytes: [bytes] raw utf-8 bytes per token; active: [bool] per token, or None for an unmarked window.
+    # active pieces are wrapped as <<piece>>; a piece is active if any of its tokens is.
+    return "".join(f"<<{t}>>" if active is not None and any(active[j] for j in js) else t
+                   for t, js in window_pieces(token_bytes)).replace("\n", "↵")
 
 
 def generate_messages(rendered, unit="neuron"):

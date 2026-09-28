@@ -1,0 +1,68 @@
+/* to do: fuck neon make this pastel */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap');
+
+:root {
+  /* Background & Surface */
+  --background: #1a1a1a;
+  --component: #323232;
+  
+  --dark-gray: #212121;
+  --mid-gray: #4c4c4c; 
+  --light-gray: #5C5C5C;
+  --near-white: #C5C5C5;
+
+  
+  /* Text */
+  --white: #FFFFFF;
+  --neon-pink: #FF80BF;
+  
+  /* Tech/Terminal */
+  --green: #00FF41;
+  --red: #FF0055;
+  
+  /* Utopia/Paradise */
+  --lavender: #B8A0FF;
+  --sky: #6BC4FF;
+  --mint: #7FFFD4;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  min-height: 100vh;
+  /* to make text big and cause im 21 when writing this */
+  font-size: 21px;
+  font-family: 'Space Grotesk', sans-serif;
+  display: flex;
+  background-color: var(--background);
+  color: var(--white);
+  /* for no horizontal scroll bar */
+  overflow-x: hidden;
+}
+
+body {
+  padding: 0.5rem;
+}
+
+ul {
+  list-style: None;
+}
+
+a {
+  text-decoration: none;
+  color: var(--sky);
+}
+
+a:visited {
+  color: var(--sky);
+}
+
+a:hover {
+  color: var(--lavender);
+}

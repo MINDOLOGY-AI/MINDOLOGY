@@ -1,0 +1,48 @@
+/* <board-canvas> — infinite 2D board: viewport grid + transformed world layers */
+
+board-canvas {
+    display: block;
+    position: relative;
+    overflow: hidden;
+}
+
+.bc-viewport {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    cursor: grab;
+    background-color: var(--background, #000);
+    /* cell size/position are driven from js so the grid follows pan/zoom */
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+}
+
+.bc-viewport:active {
+    cursor: grabbing;
+}
+
+.bc-world {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+}
+
+/* edge layer: below nodes, never intercepts clicks */
+.bc-edges {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    overflow: visible;
+    pointer-events: none;
+}
+
+/* node layer: the app positions its own node elements absolutely inside */
+.bc-nodes {
+    position: absolute;
+    top: 0;
+    left: 0;
+}

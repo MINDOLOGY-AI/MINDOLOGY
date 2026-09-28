@@ -1,5 +1,5 @@
 /* interpviz — fx-graph neural net visualizer
-   sections: base / header / board / nodes / popup / groups / auth
+   sections: base / header / board / nodes / popup / groups
    ported from the old intvrpviz frontend, rethemed to TechnoParadisalTheme vars */
 
 /* ---- base ---- */
@@ -148,32 +148,6 @@ header h1 {
 #model-status {
     font-size: 12px;
     color: var(--dim);
-}
-
-.hub-link {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--mint);
-    text-decoration: none;
-    font-size: 11px;
-    padding: 6px 10px;
-    border: 1px solid var(--mid-gray);
-    border-radius: 3px;
-    background: var(--background);
-    box-shadow: 0 2px 0 #111;
-    white-space: nowrap;
-    margin-left: auto;
-}
-
-.hub-link:hover {
-    color: var(--neon-pink);
-    border-color: var(--neon-pink);
-}
-
-.hub-link:active {
-    transform: translateY(2px);
-    box-shadow: none;
 }
 
 /* ---- board ---- */
@@ -446,20 +420,204 @@ header h1 {
     min-width: 22px;
 }
 
-/* ---- auth overlay ---- */
+/* ---- tabs + second bar ---- */
 
-/* full-page gate shown when logged out; stays under the auth-box (z 200) and its modal (z 300) */
-#auth-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--background);
+#tabs {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 150;
+    gap: 4px;
 }
 
-.auth-overlay-msg {
+#tabs .tab.active {
+    background: var(--accent);
+    color: var(--background);
+}
+
+#subbar {
+    background: var(--surface);
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.tab-controls {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.tab-controls input,
+.tab-controls textarea {
+    background: var(--background);
+    border: 1px solid var(--border);
+    color: var(--white);
+    padding: 5px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: var(--mono, monospace);
+    resize: none;
+}
+
+.tab-controls textarea {
+    width: 180px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.tab-controls label {
+    font-size: 12px;
+    color: var(--dim);
+    white-space: nowrap;
+}
+
+#sae-text {
+    width: 480px;
+}
+
+#sae-n {
+    width: 56px;
+}
+
+/* generated text: one line, scrolls horizontally */
+#sae-output {
+    flex: 1;
+    min-width: 200px;
     color: var(--lavender);
-    letter-spacing: 0.08em;
+}
+
+/* ---- sae tab ---- */
+
+#sae-view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+#sae-grid {
+    flex: 1;
+    overflow: auto;
+    display: grid;
+    align-content: start;
+    font-family: var(--mono, monospace);
+    font-size: 11px;
+}
+
+.sae-head,
+.sae-cell {
+    border-right: 1px solid var(--dark-gray);
+    border-bottom: 1px solid var(--dark-gray);
+    padding: 4px 6px;
+    min-height: 34px;
+    overflow: hidden;
+}
+
+/* layer names stay visible while scrolling right */
+.sae-head {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--surface);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+}
+
+.sae-feat {
+    cursor: pointer;
+}
+
+.sae-cell.pinned {
+    outline: 2px solid var(--lavender);
+    outline-offset: -2px;
+}
+
+.sae-feat:hover {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+}
+
+/* label text: at most 2 lines per shown latent */
+.sae-feat-line {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.3;
+}
+
+.sae-next-row {
+    color: var(--sky);
+    white-space: nowrap;
+}
+
+.sae-token-row {
+    color: var(--white);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.sae-token-row.generated {
+    color: var(--lavender);
+}
+
+.sae-latent,
+.sae-guess {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.5;
+}
+
+.sae-val {
+    display: inline-block;
+    min-width: 44px;
+    color: var(--mint);
+}
+
+#sae-side {
+    width: 440px;
+    overflow-y: auto;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    padding: 10px;
+    font-family: var(--mono, monospace);
+    font-size: 11px;
+}
+
+#sae-side h3 {
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 8px;
+}
+
+.sae-latent {
+    cursor: pointer;
+}
+
+.sae-latent:hover {
+    color: var(--accent);
+}
+
+.sae-card:not(:empty) {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    margin-bottom: 10px;
+}
+
+.sae-card-title {
+    color: var(--white);
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+.sae-card-stats {
+    color: var(--dim);
+    margin-bottom: 8px;
+}
+
+.sae-example {
+    margin-bottom: 6px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
 }

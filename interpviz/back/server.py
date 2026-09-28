@@ -1,6 +1,7 @@
 # server.py -- FastAPI WebSocket server, handles all frontend messages
 # single websocket at /ws, message protocol: {type, _id, ...} -> {type, _id, ...}
-# static files served from front/, mounted under the hub at /interpviz
+# static files served from front/
+# launched by interpviz/app.py
 
 import importlib
 import json
@@ -11,8 +12,10 @@ from urllib.parse import urlparse
 import torch
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
+from transformers.convert_slow_tokenizer import bytes_to_unicode
 
 from interpviz.back.config import DEVICE
+from interpviz.back.hooks import HookSet
 from interpviz.back.inspector import ModelInspector
 from interpviz.back.layout import compute_layout, compute_effective_graph
 from interpviz.back.routing import compute_routes
@@ -22,8 +25,8 @@ REPO_ROOT = Path.cwd()
 
 
 def load_meta(folder):
-    path = REPO_ROOT / folder / "visualMeta.json"
-    assert path.exists(), f"no visualMeta.json in {folder}"
+    path = REPO_ROOT / folder / "interpvizMeta.json"
+    assert path.exists(), f"no interpvizMeta.json in {folder}"
     meta = json.loads(path.read_text())
     # normalize — ensure all optional fields exist with empty defaults
     meta.setdefault("custom_modules", {})
@@ -34,12 +37,12 @@ def load_meta(folder):
     # selective capture: marked nodes keep values at forward (others are
     # discarded as soon as they run — shapes still shown). "all" = keep everything.
     meta.setdefault("marked", [])
-    meta.setdefault("capture_mode", "all")
+    meta.setdefault("capture_mode", "marked")
     return meta
 
 
 def save_meta(folder, meta):
-    (REPO_ROOT / folder / "visualMeta.json").write_text(json.dumps(meta, indent=4) + "\n")
+    (REPO_ROOT / folder / "interpvizMeta.json").write_text(json.dumps(meta, indent=4) + "\n")
 
 app = FastAPI()
 
@@ -51,6 +54,13 @@ meta_folder: str | None = None
 raw_graph: dict | None = None
 # current compute device — mutable via the set_device message (cpu <-> cuda)
 device = DEVICE
+# sae tab: the model's tokenizer (from meta model.tokenizer) and its raw utf-8 bytes per token id
+tokenizer = None
+token_bytes: list[bytes] | None = None
+# {set name: HookSet} loaded on the first sae request (SAE weights are GBs; the graph tab never needs them)
+hook_sets: dict | None = None
+# top next-token guesses shown per position
+N_NEXT = 5
 
 DTYPE_MAP = {
     "float16": torch.float16,
@@ -169,12 +179,15 @@ def _build_display():
 
 
 def handle(msg):
-    global inspector, meta, meta_folder, raw_graph, device
+    global inspector, meta, meta_folder, raw_graph, device, tokenizer, token_bytes, hook_sets
     t = msg["type"]
 
     if t == "load_meta":
         inspector = None
         raw_graph = None
+        tokenizer = None
+        token_bytes = None
+        hook_sets = None
         meta_folder = msg["folder"]
         meta = load_meta(meta_folder)
         return {"type": t, "device": device, **meta}
@@ -195,6 +208,13 @@ def handle(msg):
         )
         inspector = ModelInspector(model, example_inputs, dynamic_dims=m.get("dynamic_dims"))
         raw_graph = inspector.graph()
+        if m.get("tokenizer"):
+            # "module.path.function" that returns the tokenizer
+            mod_path, fn = m["tokenizer"].rsplit(".", 1)
+            tokenizer = getattr(importlib.import_module(mod_path), fn)()
+            # {byte-level BPE char: byte}, inverse of the tokenizer's byte -> printable-char map
+            byte_of = {c: b for b, c in bytes_to_unicode().items()}
+            token_bytes = [bytes(byte_of[c] for c in tokenizer.convert_ids_to_tokens(i)) for i in range(len(tokenizer))]
 
         display_nodes, display_edges = _build_display()
         return {
@@ -202,6 +222,7 @@ def handle(msg):
             "device": device,
             "displayNodes": display_nodes,
             "displayEdges": display_edges,
+            "tokenizer": tokenizer is not None,
         }
 
     elif t == "set_device":
@@ -346,6 +367,70 @@ def handle(msg):
         save_meta(meta_folder, meta)
         return {"type": t, "capture_mode": meta["capture_mode"]}
 
+    elif t == "sae_run":
+        # text -> tokens (+ n greedy generated tokens) -> one forward capturing every hook's read point
+        # -> tokens, next-token guesses per position, and every hook part's latents per token
+        assert inspector and tokenizer, "load a model with a tokenizer first"
+        # hook set files, relative to the meta folder
+        assert meta.get("hooks"), "no hooks in interpvizMeta.json"
+        if hook_sets is None:
+            hook_sets = {hs.name: hs for hs in (HookSet(REPO_ROOT / meta_folder / f) for f in meta["hooks"])}
+        model = inspector.model
+        if msg["template"]:
+            # the chat template starts with bos itself
+            prompt = tokenizer.apply_chat_template([{"role": "user", "content": msg["text"]}], add_generation_prompt=True,
+                                                   tokenize=True, return_dict=True)["input_ids"]
+        else:
+            prompt = [tokenizer.bos_token_id] + tokenizer.encode(msg["text"])
+        # (1, T) token ids, grown by greedy generation
+        ids = torch.tensor([prompt], device=device)
+        with torch.no_grad():
+            for _ in range(msg["n_generate"]):
+                # (1, T, V) -> (1, 1)
+                nxt = model(ids)[:, -1].argmax(-1, keepdim=True)
+                ids = torch.cat([ids, nxt], dim=1)
+                if nxt.item() == tokenizer.eos_token_id:
+                    break
+
+        # {read point: (T, d) float32 cpu} filled by forward hooks on the read points' modules
+        captured = {}
+        handles = []  # [RemovableHandle]
+        for point in {part["reads"] for hs in hook_sets.values() for part in hs.parts.values()}:
+            path, side = point.rsplit(":", 1)
+            module = model.get_submodule(path)
+            if side == "out":
+                # decoder layers return (hidden_states, present_kv): the activation is the first element
+                handles.append(module.register_forward_hook(
+                    lambda mod, args, out, point=point: captured.__setitem__(point, (out[0] if isinstance(out, tuple) else out)[0].float().cpu())))
+            else:
+                handles.append(module.register_forward_pre_hook(
+                    lambda mod, args, point=point: captured.__setitem__(point, args[0][0].float().cpu())))
+        try:
+            with torch.no_grad():
+                # (1, T, V)
+                logits = model(ids)
+        finally:
+            for h in handles:
+                h.remove()
+
+        # (T, V) -> (T, N_NEXT)
+        probs, nxt = logits[0].float().softmax(-1).topk(N_NEXT, dim=-1)
+        return {
+            "type": t,
+            "tokens": [tokenizer.decode([i]) for i in ids[0].tolist()],
+            "n_prompt": len(prompt),
+            # the generated continuation as text
+            "output": tokenizer.decode(ids[0, len(prompt):].tolist()),
+            "next": [[[tokenizer.decode([i]), round(p, 3)] for i, p in zip(ir, pr)] for ir, pr in zip(nxt.tolist(), probs.tolist())],
+            "hooks": {name: {"display": hs.display, "parts": hs.encode(captured)} for name, hs in hook_sets.items()},
+        }
+
+    elif t == "sae_feature":
+        # one latent's card: label, score, density, example windows from its picks
+        assert hook_sets is not None, "run a prompt first"
+        hs = hook_sets[msg["set"]]
+        return {"type": t, **hs.feature(msg["part"], msg["unit"], token_bytes)}
+
     elif t == "update_display":
         assert meta and meta_folder
         meta["display"][msg["key"]] = msg["value"]
@@ -378,5 +463,5 @@ async def ws(websocket: WebSocket):
         await websocket.send_json(response)
 
 
-# frontend statics — the hub mounts this whole app at /interpviz, so this serves /interpviz/
+# frontend statics at /
 app.mount("/", StaticFiles(directory=str(REPO_ROOT / "interpviz" / "front"), html=True), name="front")

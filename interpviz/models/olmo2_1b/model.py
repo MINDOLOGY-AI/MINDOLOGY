@@ -2,14 +2,8 @@
 # Subclasses synapse's Olmo2ForCausalLM (instead of wrapping it) so traced FX
 # node names stay single-pathed (model_layers_N_..., no double model_model).
 # Loads the local HF safetensors weights via the evoke loader recipe
-# (bf16 on cuda / fp32 on cpu). forward returns logits only, so the exported
+# (bf16, cpu). forward returns logits only, so the exported
 # graph has a single output.
-
-import sys
-from pathlib import Path
-
-# make the repo root importable when run as a script from the project root
-sys.path.insert(0, str(Path.cwd()))
 
 import torch
 from safetensors.torch import load_file
@@ -24,9 +18,10 @@ SNAPSHOT_DIR = WEIGHTS_DIR / "models--allenai--OLMo-2-0425-1B-Instruct" / "snaps
 class Olmo1B(Olmo2ForCausalLM):
     def __init__(self):
         super().__init__(OLMO2_1B_INSTRUCT_CONFIG)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
-        self.to(device=device, dtype=dtype)
+        # always bf16 on cpu: the traced graph (and the saved groups' node names) must not depend on the machine;
+        # the server moves it to the gpu on demand
+        dtype = torch.bfloat16
+        self.to(dtype=dtype)
 
         # loader recipe: safetensors on cpu, cast to dtype, load_state_dict, eval
         safetensors_file = next(SNAPSHOT_DIR.rglob("model.safetensors"))

@@ -1,13 +1,8 @@
-"""Headless smoke test for the interpviz WebSocket backend.
-
-Boots the hub on a test port, registers a throwaway user, connects to
-/interpviz/ws and exercises the fx-graph visualizer protocol against the
-bundled xor demo: load_meta / load_model / forward / get_tensor / create_group.
-
-The test user is removed afterwards. Exits non-zero on failure.
-
-Run from repo root: venv/bin/python interpviz/tests/ws_test.py
-"""
+# headless smoke test for the interpviz websocket backend.
+# boots the standalone server on a test port, connects to /ws and exercises the fx-graph visualizer protocol against the
+# bundled xor demo: load_meta / load_model / forward / get_tensor / create_group / set_device / marking.
+# exits non-zero on failure.
+# run from repo root: venv/bin/python -m interpviz.tests.ws_test
 
 import asyncio
 import json
@@ -15,17 +10,17 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+import httpx
 import torch
+import websockets
 
 PROJECT_ROOT = Path.cwd()
-sys.path.insert(0, str(PROJECT_ROOT))
-
-TEST_USER = "test_iv_user"
 TEST_PORT = 2998
 BASE = f"http://127.0.0.1:{TEST_PORT}"
 XOR_FOLDER = "interpviz/models/xor"
 
-FAILURES = []
+FAILURES = []  # [str] labels of failed checks
 
 
 def check(label, cond):
@@ -36,31 +31,14 @@ def check(label, cond):
         FAILURES.append(label)
 
 
-def cleanup_auth(user: str):
-    users_path = PROJECT_ROOT / "fab" / "data" / "auth" / "users.json"
-    sessions_path = PROJECT_ROOT / "fab" / "data" / "auth" / "sessions.json"
-    if users_path.exists():
-        users = json.loads(users_path.read_text())
-        if user in users:
-            del users[user]
-            users_path.write_text(json.dumps(users, indent=2))
-    if sessions_path.exists():
-        sessions = json.loads(sessions_path.read_text())
-        sessions = {t: s for t, s in sessions.items() if s.get("user") != user}
-        sessions_path.write_text(json.dumps(sessions, indent=2))
-
-
 def wait_for_server(proc, timeout=30):
-    import httpx
     start = time.time()
     while time.time() - start < timeout:
-        if proc.poll() is not None:
-            raise RuntimeError("server exited early")
+        assert proc.poll() is None, "server exited early"
         try:
-            r = httpx.get(f"{BASE}/auth/me", timeout=1)
-            if r.status_code in (200, 401):
+            if httpx.get(f"{BASE}/", timeout=1).status_code == 200:
                 return
-        except Exception:
+        except httpx.TransportError:
             pass
         time.sleep(0.3)
     raise RuntimeError("server did not come up")
@@ -80,27 +58,16 @@ def flat_len(values):
     return 1
 
 
-async def run_ws_tests(cookie):
-    import websockets
-
-    headers = [("Cookie", f"mindology_session={cookie}"), ("Origin", BASE)]
-
-    # no cookie -> auth_required then close
-    async with websockets.connect(f"ws://127.0.0.1:{TEST_PORT}/interpviz/ws",
-                                  additional_headers=[("Origin", BASE)]) as ws:
-        m = json.loads(await asyncio.wait_for(ws.recv(), 5))
-        check("auth_required without cookie", m.get("type") == "auth_required")
-
+async def run_ws_tests():
     # cross-origin -> handshake rejected before accept
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{TEST_PORT}/interpviz/ws",
-                                      additional_headers=[("Origin", "http://evil.example"),
-                                                          ("Cookie", f"mindology_session={cookie}")]):
+        async with websockets.connect(f"ws://127.0.0.1:{TEST_PORT}/ws",
+                                      additional_headers=[("Origin", "http://evil.example")]):
             check("cross-origin ws rejected", False)
     except websockets.exceptions.InvalidStatus:
         check("cross-origin ws rejected", True)
 
-    async with websockets.connect(f"ws://127.0.0.1:{TEST_PORT}/interpviz/ws", additional_headers=headers) as ws:
+    async with websockets.connect(f"ws://127.0.0.1:{TEST_PORT}/ws", additional_headers=[("Origin", BASE)]) as ws:
         req_id = 0
 
         async def rpc(msg):
@@ -120,7 +87,7 @@ async def run_ws_tests(cookie):
         check("load_meta xor returns model config",
               meta.get("type") == "load_meta"
               and model_cfg.get("class_name") == "XORNet"
-              and model_cfg.get("module_path") == "mind.interpviz.models.xor.model")
+              and model_cfg.get("module_path") == "interpviz.models.xor.model")
 
         # load_model returns displayNodes/displayEdges with sane positions
         loaded = await rpc({"type": "load_model"})
@@ -192,38 +159,25 @@ async def run_ws_tests(cookie):
 
 
 def main():
-    import httpx
-
-    cleanup_auth(TEST_USER)
-
-    meta_path = PROJECT_ROOT / XOR_FOLDER / "visualMeta.json"
+    meta_path = PROJECT_ROOT / XOR_FOLDER / "interpvizMeta.json"
     meta_before = meta_path.read_text()
 
     server = subprocess.Popen(
         [str(PROJECT_ROOT / "venv" / "bin" / "python"), "-m", "uvicorn",
-         "hub.back.app:app", "--host", "127.0.0.1", "--port", str(TEST_PORT)],
+         "interpviz.back.server:app", "--host", "127.0.0.1", "--port", str(TEST_PORT)],
         cwd=PROJECT_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:
         wait_for_server(server)
-        a = httpx.Client(base_url=BASE, timeout=10)
-        r = a.post("/auth/register", json={"username": TEST_USER, "password": "testpass123"})
-        check("register test user", r.status_code == 200)
-
-        cookie = a.cookies.get("mindology_session")
-        check("session cookie set", cookie is not None)
-
-        asyncio.run(run_ws_tests(cookie))
-
-        # the test only sends read-only messages + one rejected create_group
-        check("visualMeta.json untouched", meta_path.read_text() == meta_before)
+        asyncio.run(run_ws_tests())
+        # the test only sends read-only messages + one rejected create_group, and undoes its marks
+        check("interpvizMeta.json untouched", meta_path.read_text() == meta_before)
     finally:
         server.terminate()
         try:
             server.wait(timeout=5)
         except subprocess.TimeoutExpired:
             server.kill()
-        cleanup_auth(TEST_USER)
 
     print()
     if FAILURES:

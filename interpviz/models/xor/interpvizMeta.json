@@ -1,6 +1,6 @@
 {
     "model": {
-        "module_path": "mind.interpviz.models.xor.model",
+        "module_path": "interpviz.models.xor.model",
         "class_name": "XORNet",
         "weights_path": "interpviz/models/xor/weights.pt",
         "constructor_args": {},

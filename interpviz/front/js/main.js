@@ -2,11 +2,12 @@
 // all other modules import from here: send() for WebSocket calls, state for shared data
 // flow: Load Meta -> Load Model -> (optional) Forward -> click nodes to inspect
 
-import { renderNodes, clearNodes, updateNodeShapes, initNodes, setMarkMode, toggleMarksPanel } from "./nodes.js";
+import { renderNodes, clearNodes, updateNodeShapes, initNodes, setMarkMode, toggleMarksPanel, hideMarksPanel } from "./nodes.js";
 import { renderEdges, clearEdges } from "./edges.js";
 import { initPopup, closeAllPopups } from "./popup.js";
 import { initHighlight } from "./highlight.js";
-import { initGroups, refreshGroupsPanel } from "./groups.js";
+import { initGroups, refreshGroupsPanel, hideGroupsPanel } from "./groups.js";
+import { initSae } from "./sae.js";
 
 // the <board-canvas> element — pan/zoom/grid/edges all live in the component
 const board = document.getElementById("board");
@@ -30,15 +31,10 @@ export function send(type, data = {}) {
 // every `await send(...)` waits for onmessage here to resolve it (matched by _id) then returns whatever you pass to resolve
 function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/interpviz/ws`);
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onmessage = (e) => {
         // msg: {type: str, _id: int, ...payload}
         const msg = JSON.parse(e.data);
-        // server demands login — surface the auth overlay
-        if (msg.type === "auth_required") {
-            document.getElementById("auth-overlay").style.display = "flex";
-            return;
-        }
         const cb = pending[msg._id];
         if (cb) {
             delete pending[msg._id];
@@ -74,7 +70,7 @@ export const state = {
     displayNodes: null,
     // [{from, to, points: [[x,y],...]}] -- backend-computed routed edges
     displayEdges: null,
-    meta: null,             // visualMeta.json contents
+    meta: null,             // interpvizMeta.json contents
     tensorShapes: null,     // {node_id: [dims]} after forward
     tensorCache: {},        // {node_id: tensor_data} fetched on click
 };
@@ -108,7 +104,7 @@ export function centerView(displayNodes) {
     board.centerView({ minX, minY, maxX, maxY });
 }
 
-function status(text) {
+export function status(text) {
     document.getElementById("model-status").textContent = text;
 }
 
@@ -168,7 +164,7 @@ async function loadMeta() {
     }
     state.meta = result;
     if (result.device) setDeviceUI(result.device);
-    setCaptureModeUI(state.meta.capture_mode || "all");
+    setCaptureModeUI(state.meta.capture_mode || "marked");
     state.displayNodes = null;
     state.displayEdges = null;
     state.tensorShapes = null;
@@ -235,6 +231,20 @@ initNodes(send, state);
 initPopup(send, state);
 initHighlight();
 initGroups(send, state, fullRender);
+initSae();
+
+// tabs: graph (fx board) and sae (token grid) share the header, the server and the loaded model
+document.querySelectorAll("#tabs .tab").forEach(btn => btn.addEventListener("click", () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll("#tabs .tab").forEach(b => b.classList.toggle("active", b === btn));
+    document.getElementById("graph-controls").style.display = tab === "graph" ? "" : "none";
+    document.getElementById("sae-controls").style.display = tab === "sae" ? "" : "none";
+    board.style.display = tab === "graph" ? "" : "none";
+    document.getElementById("sae-view").style.display = tab === "sae" ? "" : "none";
+    // the groups / marks panels float over the board
+    hideGroupsPanel();
+    hideMarksPanel();
+}));
 
 // one load button: meta then model — there is no use for meta without the model
 document.getElementById("btn-load").addEventListener("click", async () => {

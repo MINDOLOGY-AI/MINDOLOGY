@@ -1,7 +1,7 @@
 '''
-Generate visualMeta.json for the olmo2_1b interpviz model.
+Generate interpvizMeta.json for the olmo2_1b interpviz model.
 
-Goes through the exact server path: instantiate the real Olmo1B (GPU, weights)
+Goes through the exact server path: instantiate the real Olmo1B (bf16 cpu, real weights)
 and trace it with back.inspector.ModelInspector — the same code the server
 runs — so grouped node names match the served graph by construction.
 
@@ -11,19 +11,14 @@ Layer attribution (layer_0..layer_15):
   (ep.module() turns lifted params into get_attr without nn_module_stack)
 
 Validates the 4 group rules on the server's raw edge set, ejecting strays
-(the unused rope_inv_freq buffers are disconnected dead nodes), then writes
-visualMeta.json next to this file. Embedding / lm_head / rope / mask one-shot
-ops stay ungrouped on purpose.
+(the unused rope_inv_freq buffers are disconnected dead nodes), then rewrites
+the layer_N groups in interpvizMeta.json next to this file (other groups and settings are kept).
 '''
 
 import json
 import re
-import sys
 from collections import defaultdict
 from pathlib import Path
-
-# make the repo root importable when run as a script from the project root
-sys.path.insert(0, str(Path.cwd()))
 
 import torch
 
@@ -31,7 +26,7 @@ from evoke.OlMo2_1b.run.config import OLMO2_1B_INSTRUCT_CONFIG
 from interpviz.back.inspector import ModelInspector
 from interpviz.models.olmo2_1b.model import Olmo1B
 
-OUT_PATH = Path(__file__).parent / "visualMeta.json"
+OUT_PATH = Path(__file__).parent / "interpvizMeta.json"
 NUM_LAYERS = OLMO2_1B_INSTRUCT_CONFIG.num_hidden_layers
 EXAMPLE_INPUT = [[1, 2, 3, 4, 5, 6, 7, 8]]
 # seq dim stays dynamic so forward accepts any length (matches the server, which reads this from the meta)
@@ -180,23 +175,10 @@ def main():
     print(f"grouped: {len(grouped_names)} in {len(groups)} groups, ejected to loose: {total_ejected}")
     print(f"loose nodes: {len(loose)} -> default view shows {len(loose) + len(groups)} boxes")
 
-    meta = {
-        "model": {
-            "module_path": "mind.interpviz.models.olmo2_1b.model",
-            "class_name": "Olmo1B",
-            "weights_path": None,
-            "constructor_args": {},
-            # one entry per forward arg; the server does torch.tensor on each
-            "example_inputs": [EXAMPLE_INPUT],
-            "input_dtypes": ["long"],
-            "dynamic_dims": DYNAMIC_DIMS,
-        },
-        "expanded_groups": [],
-        "custom_modules": custom_modules,
-        "names": {},
-        "tensors": {},
-    }
-    OUT_PATH.write_text(json.dumps(meta, indent=2))
+    # replace only the layer groups: hand-made groups (embed, final_linear, ...) and view state are kept
+    meta = json.loads(OUT_PATH.read_text())
+    meta["custom_modules"] = {**{g: m for g, m in meta["custom_modules"].items() if not g.startswith("layer_")}, **custom_modules}
+    OUT_PATH.write_text(json.dumps(meta, indent=4) + "\n")
     print(f"wrote {OUT_PATH}")
 
 

@@ -7,7 +7,7 @@
 // main.js by a different specifier (a mismatched url spawns a second module
 // instance, see nodes.js)
 import { showError } from "./main.js";
-import { refreshStars } from "./nodes.js";
+import { hideMarksPanel } from "./nodes.js";
 
 let sendFn = null;
 let stateRef = null;
@@ -80,8 +80,12 @@ export function refreshGroupsPanel() {
     renderPanel();
 }
 
+// both side panels sit in the same corner: only one is open at a time
+export function hideGroupsPanel() { panel.style.display = "none"; }
+
 function togglePanel() {
     if (panel.style.display === "none") {
+        hideMarksPanel();
         panel.style.display = "block";
         renderPanel();
     } else {
@@ -131,25 +135,6 @@ function renderPanel() {
         label.className = "group-name";
         label.textContent = name;
         row.appendChild(label);
-
-        // mark star: marks/unmarks every member for selective capture
-        const markedSet = new Set(stateRef.meta?.marked || []);
-        const anyMarked = (groups[name] || []).some(m => markedSet.has(m));
-        const starBtn = document.createElement("button");
-        starBtn.textContent = anyMarked ? "★" : "☆";
-        starBtn.title = "mark group for selective capture";
-        if (anyMarked) starBtn.style.color = "var(--mint)";
-        starBtn.addEventListener("click", async () => {
-            try {
-                const res = await sendFn("set_marked", { name, marked: !anyMarked });
-                stateRef.meta.marked = res.marked;
-                renderPanel();
-                refreshStars();
-            } catch (err) {
-                showError(err);
-            }
-        });
-        row.appendChild(starBtn);
 
         const btns = document.createElement("span");
         btns.style.marginLeft = "auto";

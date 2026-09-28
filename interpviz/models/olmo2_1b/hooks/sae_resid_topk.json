@@ -1,0 +1,143 @@
+{
+    "kind": "topk_sae",
+    "args": {
+        "embed_dim": 2048,
+        "expansion_factor": 16,
+        "k": 64
+    },
+    "display": {
+        "max_features": 64,
+        "on_cell": 1,
+        "max_examples": 10
+    },
+    "parts": {
+        "L0": {
+            "reads": "model.layers.0:out",
+            "writes": "model.layers.0:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L0.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L0.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L0.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L0"
+        },
+        "L1": {
+            "reads": "model.layers.1:out",
+            "writes": "model.layers.1:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L1.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L1.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L1.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L1"
+        },
+        "L2": {
+            "reads": "model.layers.2:out",
+            "writes": "model.layers.2:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L2.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L2.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L2.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L2"
+        },
+        "L3": {
+            "reads": "model.layers.3:out",
+            "writes": "model.layers.3:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L3.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L3.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L3.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L3"
+        },
+        "L4": {
+            "reads": "model.layers.4:out",
+            "writes": "model.layers.4:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L4.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L4.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L4.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L4"
+        },
+        "L5": {
+            "reads": "model.layers.5:out",
+            "writes": "model.layers.5:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L5.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L5.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L5.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L5"
+        },
+        "L6": {
+            "reads": "model.layers.6:out",
+            "writes": "model.layers.6:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L6.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L6.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L6.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L6"
+        },
+        "L7": {
+            "reads": "model.layers.7:out",
+            "writes": "model.layers.7:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L7.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L7.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L7.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L7"
+        },
+        "L8": {
+            "reads": "model.layers.8:out",
+            "writes": "model.layers.8:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L8.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L8.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L8.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L8"
+        },
+        "L9": {
+            "reads": "model.layers.9:out",
+            "writes": "model.layers.9:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L9.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L9.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L9.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L9"
+        },
+        "L10": {
+            "reads": "model.layers.10:out",
+            "writes": "model.layers.10:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L10.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L10.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L10.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L10"
+        },
+        "L11": {
+            "reads": "model.layers.11:out",
+            "writes": "model.layers.11:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L11.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L11.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L11.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L11"
+        },
+        "L12": {
+            "reads": "model.layers.12:out",
+            "writes": "model.layers.12:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L12.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L12.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L12.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L12"
+        },
+        "L13": {
+            "reads": "model.layers.13:out",
+            "writes": "model.layers.13:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L13.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L13.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L13.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L13"
+        },
+        "L14": {
+            "reads": "model.layers.14:out",
+            "writes": "model.layers.14:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L14.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L14.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L14.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L14"
+        },
+        "L15": {
+            "reads": "model.layers.15:out",
+            "writes": "model.layers.15:out",
+            "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L15.pt",
+            "labels": "results/OlMo2_1b/sae_resid_topk/labels/L15.jsonl",
+            "density": "results/OlMo2_1b/sae_resid_topk/density/L15.density.bin",
+            "picks": "results/OlMo2_1b/sae_resid_topk/picks/L15"
+        }
+    }
+}

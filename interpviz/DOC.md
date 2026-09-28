@@ -1,0 +1,124 @@
+# interpviz
+
+visualize (and perturb) every tensor inside a pytorch model, as a live FX-graph board (graph tab), and what trained hooks (SAEs, later CLTs) read out of it per token (sae tab).
+run from repo root: `venv/bin/python -m interpviz.app`, open `localhost:8000`. it auto-restarts when a .py under `interpviz/` changes (click load again; frontend changes need only a refresh).
+
+# how it works
+
+## backend (`back/`)
+
+- `inspector.py` — the core. `ModelInspector(model, example_inputs)` traces the model with `torch.export.export(..., strict=False)` into an FX graph: every node is one instruction (`placeholder` = input, `get_attr` = weight/bias, `call_function` = math op, `output`). `graph()` turns that into plain `{nodes, edges}` dicts. `forward()` re-executes the graph node-by-node with a `CapturingInterpreter` that stores EVERY intermediate tensor (and supports overriding any node's value mid-run — that's the perturbation feature). `get_tensor()` returns one captured tensor (all values, or top-k).
+- `layout.py` — group collapse + grid placement. `compute_effective_graph()` hides collapsed groups into single boxes and rewires boundary edges. `compute_layout()` assigns each node an integer (row, col): rows by topological depth (inputs bottom, outputs top), columns by clustering nodes that share consumers; parentless weights sit one row above their lowest consumer; dead nodes (no consumers) sit at row 0.
+- `routing.py` — 90° edge routes: straight if same column, else a 6-point path through the margin lane next to the target. ports are spread along node borders so parallel edges don't overlap.
+- `server.py` — single websocket `/ws`, request/response by `_id`, statics from `front/` at `/`. holds global state: loaded meta, inspector, raw graph. every mutation (group/expand/rename) re-runs layout+routing and persists `interpvizMeta.json`. cross-origin websockets rejected.
+- `hooks.py` — `HookSet`: loads one hook set file (see Hooks), `encode()` the captured activations per part, `feature()` one latent's card.
+- `config.py` — `DEVICE` = `"cpu"` (startup device; the top-bar button moves the model to gpu).
+
+## frontend (`front/`)
+
+- renders on `<board-canvas>` (`front/components/BoardCanvas/`, theme `front/components/TechnoParadisalTheme.css`) — infinite-board component (pan/zoom/grid/SVG edge layer). backend sends fully-computed positions + edge points; frontend just draws.
+- node colors: get_attr → sky, output → lavender, group → mint, everything else → white.
+- click a node → inputs highlight pink, outputs highlight purple. double-click a tensor node → popup with shape + values, override & re-run. double-click a group → expand/collapse. double-click rename.
+- header: tabs (graph / sae), meta folder + load, device. second bar: the open tab's controls.
+- groups panel: selection mode (click nodes), create/update/delete groups. rules: interconnected, no cycle with the outside, at least one output node, no overlap with other groups.
+
+## per-model folder (`models/<name>/`)
+
+```
+models/foo/
+    __init__.py
+    model.py          # nn.Module — constructor may load weights itself
+    interpvizMeta.json   # REQUIRED — the whole config + saved view state
+```
+
+`interpvizMeta.json`:
+
+```json
+{
+  "model": {
+    "module_path": "interpviz.models.foo.model",
+    "class_name": "Foo",
+    "weights_path": null,
+    "constructor_args": {},
+    "example_inputs": [[[0.1, 0.2, 0.3, 0.4]]],
+    "input_dtypes": ["float32"]
+  },
+  "expanded_groups": [],
+  "custom_modules": {},
+  "names": {},
+  "tensors": {}
+}
+```
+
+- `example_inputs` is a LIST OF FORWARD ARGS — `example_inputs[i]` becomes `torch.tensor(example_inputs[i], dtype=input_dtypes[i])`. for one arg of shape (1, 8) that's `[[[1, 2, ...]]]` — three nesting levels. getting this wrong is the #1 onboarding bug.
+- `dynamic_dims` (optional): per-arg list of dims to keep dynamic, e.g. `"dynamic_dims": [[1]]` for the seq dim of (batch, seq). without it the trace SPECIALIZES on the example shape and forward rejects any other size with "Guard failed".
+- `custom_modules` = saved groups `{name: [fx_node_names]}`; `expanded_groups` = which are open; `names` = renames; `tensors` = per-node display config (`{"display": "topk", "k": 5, "features": "labels.json"}`).
+- `marked` = fx node names whose VALUES are captured at forward; `capture_mode` = `"marked"` (default) or `"all"`. in marked mode every node still runs and shows its shape — unmarked tensors are discarded as they execute, so huge models don't OOM. toggle in the ui: star on any board node/group box, show marked / show all button. the groups and marks panels share a corner, opening one closes the other.
+- `model.tokenizer` (optional): `"module.path.function"` returning the tokenizer, e.g. `"evoke.OlMo2_1b.run.loader.load_olmo2_tokenizer"`. needed by the sae tab.
+- `hooks` (optional): hook set files for the sae tab, relative to the model folder, e.g. `["hooks/sae_resid_topk.json"]`.
+- `weights_path`: if set, server does `torch.load` + `load_state_dict`. if your constructor loads its own weights (like olmo), leave null.
+
+# how to use it on a NEW model
+
+1. **write the wrapper** `models/foo/model.py`: a plain `nn.Module` whose `forward` returns a SINGLE tensor (wrap multi-output models — see `models/olmo2_1b/model.py`, which subclasses and returns only logits). data-dependent control flow will break `torch.export`; config-flag branches are fine.
+2. **write interpvizMeta.json** (see above). test the trace first:
+   `venv/bin/python -c "from interpviz.back.inspector import ModelInspector; from interpviz.models.foo.model import Foo; import torch; ModelInspector(Foo(), (torch.zeros(1, 4),))"`.
+3. **open the ui**: type `interpviz/models/foo` in the meta folder field → load (meta + model) → forward. double-click nodes to see values.
+4. **group early**. any real model is 1k+ nodes — unusable raw. if your model has a repeated block (transformer layers), generate groups programmatically instead of clicking: copy `models/olmo2_1b/gen_groups.py` — it builds the graph via the server's own path (so names match BY CONSTRUCTION — do not trace a differently-nested module or a different export call), assigns nodes to groups by `nn_module_stack` / name, validates the 4 group rules, and writes `custom_modules` into interpvizMeta.json.
+5. names must match between your generator and the server: the server traces `ep.module()` (unflattened — weights are `get_attr` nodes named after their module path, e.g. `model_layers_0_mlp_up_proj_weight`). if you subclass instead of wrapping, paths stay short (`model.layers.N`, not `model.model.layers.N`).
+
+# the two bundled models
+
+- `models/xor` — 2-8-1 MLP, trained weights included. the smoke-test model; good for learning the ui.
+- `models/olmo2_1b` — OlMo2 1B Instruct (evoke's synapse reimplementation, local safetensors, always bf16 on cpu so the trace is device-independent; the device button moves it to gpu). 1588 visible ops; groups: 16 layers (generated) + embed, rotary_emb, causal_mask, final_linear (hand-made); default view 23 boxes. expand any layer to see its 97 ops; click a softmax to see attention weights per head. `gen_groups.py` regenerates the layer groups (rerun when torch or the model code changes node names); `tests/olmo_smoke.py` verifies the whole path.
+
+# Hooks
+
+a hook = a trained probe on the model: **reads** activations at a point, encodes them into sparse **latents** (labeled offline), and **writes** back at a point (a reconstruction; for edits only the change `(new - old) × decoder` is added, so the probe's error stays in the model).
+
+| hook | reads | writes |
+|---|---|---|
+| SAE | layer i out | layer i out |
+| transcoder | layer i mlp in | layer i mlp out |
+| CLT | layer i mlp in | mlp out of layers i..N |
+
+**point** = `"<module path>:<in|out>"`, e.g. `"model.layers.8:out"` = output of `model.layers.8` (the same module the probe was trained on; decoder layers return a tuple, the activation is its first element).
+
+**hook set file** `models/<model>/hooks/<set>.json` — interpviz's only view of a trained probe family; it points into `weights/` and `results/`, which interpviz only reads:
+```json
+{
+  "kind": "topk_sae",
+  "args": {"embed_dim": 2048, "expansion_factor": 16, "k": 64},
+  "display": {"max_features": 64, "on_cell": 1, "max_examples": 10},
+  "parts": {
+    "L8": {
+      "reads":   "model.layers.8:out",
+      "writes":  "model.layers.8:out",
+      "weights": "weights/evoke/OlMo2_1b/sae_resid_topk/L8.pt",
+      "labels":  "results/OlMo2_1b/sae_resid_topk/labels/L8.jsonl",
+      "density": "results/OlMo2_1b/sae_resid_topk/density/L8.density.bin",
+      "picks":   "results/OlMo2_1b/sae_resid_topk/picks/L8"
+    }
+  }
+}
+```
+- `kind` → probe class (`hooks.py` `KINDS`), built with `args`, loads `weights` (a state_dict), has `encode(x) -> (N, n_latents)`.
+- `display.max_features` = latents per token sent to the ui (hover / side list); `on_cell` = labels written in each grid cell; `max_examples` = example windows per latent card.
+- `parts` = the probes of the set; latent ids are `part:unit`, e.g. `L8:123`. `labels` = the label pipeline's jsonl, `density` = `(D,) float64`, `picks` = prefix of the picks files (`L8.windows.bin`, ...; their `meta.json` sits next to them and names the token dataset).
+
+## sae tab
+- type english → `[bos] + tokens` (or the model's chat template) → optional greedy generation of n tokens (stops at eos) → one forward with torch forward hooks on every read point → every part encodes its point.
+- grid: one column per token (generated ones in lavender, continuing right), rows top → bottom: next-token guess per position, parts in reverse file order (L15 ... L0), tokens. a cell shows its top `on_cell` latent labels, shaded by the strongest value vs the row's max. hovering a cell fills the side panel (its latents with values, or the top 5 next-token guesses); click pins the cell (hover stops changing the panel, click again to unpin); click a latent = its card (label, score, density, `max_examples` pick windows, pieces shaded by activation).
+- mouse wheel scrolls the grid sideways, shift + wheel up/down.
+- second bar: the generated text in a one-line horizontally scrolling box next to generate.
+- hook sets load on the first run (the SAEs are GBs; the graph tab never needs them), on cpu in fp32; activations are moved to cpu for encoding.
+- messages: `sae_run {text, template, n_generate}` → `{tokens: [str], n_prompt, output: str (generated text), next: [[[str, prob] x5] per token], hooks: {set: {display, parts: {part: {reads, ids: [[int]], vals: [[float]], labels: {id: [label, score]}}}}}}` (per token strongest first, zeros dropped, labels only for latents that fired); `sae_feature {set, part, unit}` → `{label, score, density, examples: [{pieces: [str], acts: [float]}]}` (a piece = tokens merged to whole characters, act = its max).
+
+# SAEs
+
+`models/olmo2_1b/hooks/sae_resid_topk.json`: the TopK SAEs of `synapse/interp/DOC.md` (100M-token run, all 16 layers), one part per layer `L0`..`L15`, each reading and writing `model.layers.i:out` (resid_post, the training hook). `encode` = `topk_64(relu((x·s - b_dec) W_enc + b_enc))`, so every token has ≤ 64 active latents and `max_features` = 64 shows all of them. labels, density and picks come from `results/OlMo2_1b/sae_resid_topk/`.
+
+# tests
+
+- `tests/ws_test.py` — fast cpu suite (xor): boots the server, full ws flow incl. cross-origin rejection, groups, forward, device, marking. `venv/bin/python -m interpviz.tests.ws_test`
+- `tests/olmo_smoke.py` — cpu, ~1 min: real weights, trace, forward, group validation. run after changing the olmo wrapper or gen_groups.

@@ -4,56 +4,56 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>interpviz</title>
-    <base href="/interpviz/">
-    <link rel="stylesheet" href="/components/TechnoParadisalTheme.css">
-    <link rel="stylesheet" href="/components/AuthBox/AuthBox.css">
-    <link rel="stylesheet" href="/components/BoardCanvas/BoardCanvas.css">
+    <link rel="stylesheet" href="components/TechnoParadisalTheme.css">
+    <link rel="stylesheet" href="components/BoardCanvas/BoardCanvas.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <header>
-        <a href="/" class="hub-link" title="back to hub">hub</a>
         <h1>interpviz</h1>
+        <div id="tabs">
+            <button class="tab active" data-tab="graph">graph</button>
+            <button class="tab" data-tab="sae">sae</button>
+        </div>
         <div id="controls">
             <input id="meta-folder" type="text" value="interpviz/models/olmo2_1b" placeholder="meta folder (e.g. interpviz/models/olmo2_1b)">
             <button id="btn-load">load</button>
             <span class="sep"></span>
             <span id="model-status"></span>
             <span class="sep"></span>
+            <button id="btn-device">cpu</button>
+        </div>
+    </header>
+    <!-- second bar: controls of the open tab -->
+    <div id="subbar">
+        <div id="graph-controls" class="tab-controls">
             <textarea id="input-tensor" rows="1" placeholder="inputs JSON">[[[0, 1]]]</textarea>
             <button id="btn-forward">forward</button>
-            <span class="sep"></span>
-            <button id="btn-device">cpu</button>
             <span class="sep"></span>
             <button id="btn-groups">groups</button>
             <button id="btn-mark-mode" title="click nodes to mark/unmark them">mark mode</button>
             <button id="btn-marks" title="list marked nodes">marks</button>
             <span class="sep"></span>
-            <button id="btn-capture-mode">show all</button>
+            <button id="btn-capture-mode" class="active">show marked</button>
         </div>
-    </header>
+        <div id="sae-controls" class="tab-controls" style="display:none;">
+            <textarea id="sae-text" rows="1" placeholder="type english here">The cat sat on the</textarea>
+            <label><input id="sae-template" type="checkbox" checked> chat template</label>
+            <button id="btn-sae-run">run</button>
+            <span class="sep"></span>
+            <input id="sae-n" type="number" min="0" value="20" title="tokens to generate">
+            <button id="btn-sae-generate">generate</button>
+            <span class="sep"></span>
+            <input id="sae-output" type="text" readonly placeholder="model output">
+        </div>
+    </div>
     <board-canvas id="board"></board-canvas>
-
-    <auth-box></auth-box>
-
-    <!-- full-page gate shown when logged out -->
-    <div id="auth-overlay" style="display:none;">
-        <div class="auth-overlay-msg">please log in — top right</div>
+    <div id="sae-view" style="display:none;">
+        <div id="sae-grid"></div>
+        <div id="sae-side"></div>
     </div>
 
-    <script type="module" src="/components/AuthBox/AuthBox.js"></script>
-    <script type="module" src="/components/BoardCanvas/BoardCanvas.js"></script>
+    <script type="module" src="components/BoardCanvas/BoardCanvas.js"></script>
     <script type="module" src="js/main.js"></script>
-    <script type="module">
-        // login gate: cover the app until authed; reload once logged in
-        const overlay = document.getElementById('auth-overlay');
-        fetch('/auth/me', { credentials: 'same-origin' }).then(res => {
-            overlay.style.display = res.ok ? 'none' : 'flex';
-        });
-        document.addEventListener('auth-changed', (e) => {
-            if (e.detail.user) location.reload();
-            else overlay.style.display = 'flex';
-        });
-    </script>
 </body>
 </html>

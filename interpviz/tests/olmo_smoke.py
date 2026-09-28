@@ -9,11 +9,6 @@ key tensor shapes / default-view box count.
 '''
 
 import json
-import sys
-from pathlib import Path
-
-# make the repo root importable when run as a script from the project root
-sys.path.insert(0, str(Path.cwd()))
 
 import torch
 

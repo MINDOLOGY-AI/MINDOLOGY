@@ -30,11 +30,13 @@ output `results/<model>/<run>/picks/` (empty slot: `chunk = -1`):
 
 ## dynamic transformation analysis
 patterns of activation changes? what areas get mapped to what?  
+not done yet  
 
 # label
 `label.py` (prompts `interp_prompt.py`, api `openrouter.py`). SAEBench autointerp, 2 llm calls per unit. same code for MLP neurons and SAE features; prompts say `neuron` or `feature`.  
 
-**label call** — 10 top-k + 10 iw (slots 0..9, 20..29), strongest first, SAEBench marking: a piece is wrapped `<<like this>>` if its activation > 1% of the unit's max (top-k slot 0), `\n` → `↵`. a piece = one token, or consecutive tokens merged until they end on a character boundary (byte-level BPE splits multi-byte characters). SAEBench-based system prompt; answer = text after "activates on", ≤ 20 words.  
+**label call** — 10 top-k + 10 iw (slots 0..9, 20..29), strongest first, SAEBench marking: a piece is wrapped `<<like this>>` if its activation > 1% of the unit's max (top-k slot 0)
+`\n` → `↵`. a piece = one token, or consecutive tokens merged until they end on a character boundary (byte-level BPE splits multi-byte characters). SAEBench-based system prompt; answer = text after "activates on", ≤ 20 words.  
 
 **test call** — held-out 10 top-k + 10 iw (slots 10..19, 30..39) + 20 random, unmarked, shuffled. llm gets the label, answers which examples fire (comma-separated numbers / "None"). truth: held-out picks fire; a random window fires iff any token > the unit's p99. **score = balanced accuracy**, chance 0.5.  
 

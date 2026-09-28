@@ -5,7 +5,7 @@
 
 import { showTensorPopup } from "./popup.js";
 import { highlightEdges } from "./highlight.js";
-import { isSelectionMode, toggleNodeSelection, refreshGroupsPanel } from "./groups.js";
+import { isSelectionMode, toggleNodeSelection, refreshGroupsPanel, hideGroupsPanel } from "./groups.js";
 // static circular import — safe for function declarations (live bindings),
 // and CRITICAL: never dynamic-import main.js by a different specifier — a
 // mismatched url spawns a SECOND module instance with its own empty state + websocket
@@ -69,8 +69,11 @@ marksPanel.className = "group-panel";
 marksPanel.style.display = "none";
 document.body.appendChild(marksPanel);
 
+export function hideMarksPanel() { marksPanel.style.display = "none"; }
+
 export function toggleMarksPanel() {
     if (marksPanel.style.display === "none") {
+        hideGroupsPanel();
         renderMarksPanel();
         marksPanel.style.display = "block";
     } else {
