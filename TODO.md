@@ -5,7 +5,7 @@ port the openmindfab CLI here. unify a serving function.
 - Fix Up Labeling Prompt
 
 Qwen3.5-4B SAEs, full run on a rented H100 80GB (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`, all 32 layers, one epoch ~950M tokens, groups of 8, ~35h):  
-- runpod: network volume ~150GB in an H100 SXM datacenter, pod with it mounted + ssh  
+- runpod H100 SXM pod: 150GB volume disk at /workspace (peak use ~85GB) + ~50GB container disk, ssh enabled  
 - clone the repo, `pip install -r requirements.txt`, `python -m evoke.Qwen3_5_4b.run.download`  
 - upload the laptop's `data/datasteps/txt/interp_dataset` (arxiv needs it: redpajama's script dataset doesn't run on datasets >= 4; starcoder is gated)  
 - check `lucadiliello/bookcorpusopen` rows are natural-text books (field `text`) before downloading  

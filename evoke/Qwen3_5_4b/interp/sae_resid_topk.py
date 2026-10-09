@@ -84,6 +84,9 @@ def train_group(lm, layers, expansion, train_ds, eval_ds, train_tokens, batch_ch
     for f in ("losses.json", "losses.png"):
         if (group_dir / f).exists():
             shutil.copy(group_dir / f, results_dir / f"{group_dir.name}.{f}")
+    # the group's resume checkpoint (~20GB of sae weights + adam state) is dead once its L<i>.pt are saved
+    for ckpt in group_dir.glob("*.pt"):
+        ckpt.unlink()
     return saes
 
 
