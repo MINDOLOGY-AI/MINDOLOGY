@@ -82,13 +82,13 @@ After all heads complete:
     out = out @ W_o   # final projection, mixes heads
 
 
-OlMo2 tweaks:
+HF-compatible defaults:
 - Separate Q, K, V projections (no fused qkv_proj) so HF weight names map 1:1.
 - Optional q_norm / k_norm after projection (controlled by qk_norm param).
 - Optional flash/SDPA path vs manual eager attention (controlled by use_flash param).
 - position_embeddings come from outside (cos, sin) to support KV-cache decoding.
 
-Qwen3.5 tweaks (all off by default, OlMo2 path unchanged):
+Qwen3.5 tweaks (all off by default):
 - query_gate: q_proj outputs 2x the query dim; per head the output is split
   into (query, gate) and the attention output is multiplied by sigmoid(gate)
   before o_proj.

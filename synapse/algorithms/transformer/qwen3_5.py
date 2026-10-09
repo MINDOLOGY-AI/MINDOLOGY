@@ -8,7 +8,7 @@ Built from the generic primitives in synapse/algorithms:
 - basic.RMSnorm.RMSNorm            (centered=True, the Qwen3.5 zero-init style)
 - basic.gatedMLP.GatedMLP
 - encoding.RoPE.RoPE               (partial_rotary_factor < 1)
-- encoding.mask.create_olmo_causal_mask
+- encoding.mask.create_causal_mask
 - attention.GQA.GQA                (query_gate=True, per-head centered qk norms)
 - attention.GatedDeltaNet.GatedDeltaNet
 
@@ -32,7 +32,7 @@ import torch.nn.functional as F
 from ..basic.RMSnorm import RMSNorm
 from ..basic.gatedMLP import GatedMLP
 from ..encoding.RoPE import RoPE
-from ..encoding.mask import create_olmo_causal_mask
+from ..encoding.mask import create_causal_mask
 from ..attention.GQA import GQA
 from ..attention.GatedDeltaNet import GatedDeltaNet
 
@@ -222,7 +222,7 @@ class Qwen3_5TextModel(nn.Module):
             ).unsqueeze(0)
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
-        causal_mask = create_olmo_causal_mask(
+        causal_mask = create_causal_mask(
             inputs_embeds,
             attention_mask=attention_mask,
             past_key_values_length=past_length,

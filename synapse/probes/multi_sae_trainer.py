@@ -37,7 +37,8 @@ class MultiSAETrainer(nn.Module):
 
     def _make_capture(self, layer_idx):
         def capture(module, input, output):
-            self._acts[layer_idx] = output[0].detach()  # (B, seq, d_model)
+            # some blocks return (hidden_states, cache, ...), others the hidden states alone
+            self._acts[layer_idx] = (output[0] if isinstance(output, tuple) else output).detach()  # (B, seq, d_model)
             if layer_idx == max(self.layer_indices):
                 raise _StopForward
         return capture

@@ -1,6 +1,6 @@
 '''
 Helpers for applying Rotary Position Embeddings.
-OlMo2 expects cos/sin computed once by RoPE and then injected into Q/K.
+cos/sin are computed once by RoPE and then injected into Q/K.
 '''
 
 import torch

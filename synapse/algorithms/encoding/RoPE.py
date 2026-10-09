@@ -12,7 +12,7 @@ a = pos_a * inv_freq, b = pos_b * inv_freq, so a - b = (pos_a - pos_b) * inv_fre
 earlier coordinates have larger inv_freq so rotate faster, more useful for earlier positions
 however at later positions it rotates too many circles and becomes indistinguishable for the model so we rely on latter coordinates with smaller inv_freq to maintain distinctiveness.
 
-OlMo2 tweak: this module only *computes* cos/sin from position_ids.
+this module only *computes* cos/sin from position_ids.
 The actual rotation is done by apply_rotary_pos_emb in rope_utils.py.
 This matches the HF-style separation and makes KV-cache decoding easy.
 

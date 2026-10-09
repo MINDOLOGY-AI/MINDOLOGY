@@ -4,13 +4,11 @@ port the openmindfab CLI here. unify a serving function.
 
 - Fix Up Labeling Prompt
 
-SAE retrain, all 16 layers at 1B tokens (`evoke/OlMo2_1b/interp/sae_resid_topk.py`, already configured: 1B data split, lr decay, seed 21):  
-- L8 trial done (`results/OlMo2_1b/sae_resid_topk_1bTok/compare_L8/`): recon 19.4% -> 18.3%, CE +3.5% -> +2.8%, rare tail 31% -> 26%. decide if worth it  
-- L8 alone took 6.5h on weighty; try 8 SAEs per LM pass instead of 4 if it fits 32GB  
-- speedups: bf16 SAE matmuls  
-- then eval + picks + labels (~$85), then delete the 100M run (`sae_resid_topk`, `olmo2_1b_interp_dataset_100Mrun`)  
-
-limited decoder (`TopKSAE.py`, done, matches the dense version to float rounding): benchmark steps/s on weighty before the 1B retrain (expect ~25-35% faster)  
+Qwen3.5-4B SAEs on weighty (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`, 8 full-attention layers x 500M tokens):  
+- `git pull`, rename the text dir: `mv data/datasteps/txt/olmo2_1b_interp_dataset data/datasteps/txt/interp_dataset`  
+- tokenize: `python -m datasteps.interp_dataset.tokenize_interp_dataset` (~1.2B tokens)  
+- short trial first: peak memory + steps/s for groups of 4 at 4096 tokens/step (the limited decoder's speedup shows here too)  
+- full run (~a day), then picks + labels (8 x 40960 = 327,680 features, ~$52)  
 
 SAE search (`TopKSAE.py`, L8 short runs vs the current recipe on the same eval):  
 - AuxK stronger + earlier: dead threshold 10M tokens -> lower (e.g. 1M / 250k) so rare-but-alive features get aux gradient too; aux_coeff 1/32 -> higher  

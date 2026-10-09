@@ -413,15 +413,18 @@ def handle(msg):
             prompt = tokenizer.apply_chat_template([{"role": "user", "content": msg["text"]}], add_generation_prompt=True,
                                                    tokenize=True, return_dict=True)["input_ids"]
         else:
-            prompt = [tokenizer.bos_token_id] + tokenizer.encode(msg["text"])
+            # models without a bos token (qwen) start straight with the text
+            prompt = ([tokenizer.bos_token_id] if tokenizer.bos_token_id is not None else []) + tokenizer.encode(msg["text"])
         # (1, T) token ids, grown by greedy generation
         ids = torch.tensor([prompt], device=device)
+        special_ids = set(tokenizer.all_special_ids)  # {int}
         with torch.no_grad(), edited(model, sae_probes, sae_edits):
             for _ in range(msg["n_generate"]):
                 # (1, T, V) -> (1, 1)
                 nxt = model(ids)[:, -1].argmax(-1, keepdim=True)
                 ids = torch.cat([ids, nxt], dim=1)
-                if nxt.item() == tokenizer.eos_token_id:
+                # any special token ends it (qwen: <|im_end|> after a chat turn, <|endoftext|> after plain text)
+                if nxt.item() in special_ids:
                     break
 
         # {read point: (T, d) float32 cpu} filled by forward hooks on the read points' modules. the edit hooks go in

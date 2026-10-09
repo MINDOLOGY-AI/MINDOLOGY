@@ -11,10 +11,10 @@ gate: [1 , 0]. up : [0,1]. this passes through value of coordinate_2 IF coordina
 
 it is sigmoid(gate) * gate * up rather than sigmoid (gate) * up due to the potential for gate to amplify the up.
 
-OlMo2 tweaks:
+HF-compatible defaults:
 - separate gate_proj / up_proj by default so HF weight names map directly.
 - optional fused gate_up_proj if you want fewer params (set separate_gate_up_proj=False).
-- bias is configurable (OlMo2 uses False).
+- bias is configurable.
 '''
 
 import torch

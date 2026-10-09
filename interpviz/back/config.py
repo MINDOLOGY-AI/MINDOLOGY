@@ -3,6 +3,6 @@
 
 import torch
 
-# default device for tracing + forward passes. cpu by default (the top-bar
-# toggle moves the loaded model to gpu on demand)
-DEVICE = "cpu"
+# startup device for tracing + forward passes: the gpu (interpviz runs on weighty); the top-bar
+# toggle moves the loaded model to the cpu and back
+DEVICE = "cuda"

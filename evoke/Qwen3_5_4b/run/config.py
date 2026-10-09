@@ -75,7 +75,6 @@ class Qwen3_5Config:
 # shortcut for the 4B checkpoint
 QWEN3_5_4B_CONFIG = Qwen3_5Config()
 
-# load Linears as int8 via bitsandbytes so the 4B model fits on an 8GB GPU.
-# in-memory only: the safetensors on disk are untouched, and setting this
-# back to False restores the exact bf16 model (used for interp work).
-QUANTIZE_INT8 = True
+# load Linears as int8 via bitsandbytes (in memory only, the safetensors on disk are untouched).
+# off: everything runs the exact bf16 model on weighty (5090, 32GB).
+QUANTIZE_INT8 = False

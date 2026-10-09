@@ -4,7 +4,7 @@ RMS is applied at the token level across the embed_dim. the total would be sqrt(
 without gamma the mean(x_norm^2) = 1
 RMS(x) = sqrt (1/n * sum(x^2)) * gamma
 
-OlMo2 tweak: cast to float32 for numerical stability, multiply by weight,
+default: cast to float32 for numerical stability, multiply by weight,
 then cast back to the input dtype.
 
 Qwen3.5 tweak: centered=True switches to the zero-centered variant
@@ -34,7 +34,7 @@ class RMSNorm(nn.Module):
         variance = x.pow(2).mean(-1, keepdim=True) # not technically variance
         x_norm = x * torch.rsqrt(variance + self.eps) #reciprocal square root
 
-        # OlMo2 multiplies weight before dtype conversion
+        # default: multiply weight before dtype conversion
         # Qwen3.5 centers the weight around 1 instead
         if self.centered:
             out = x_norm * (1.0 + self.weight)

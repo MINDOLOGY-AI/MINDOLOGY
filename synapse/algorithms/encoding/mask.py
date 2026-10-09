@@ -9,25 +9,14 @@ Shape: (batch, 1, query_len, key_len) so it broadcasts over heads.
 import torch
 
 
-def create_causal_mask(seq_len, device, dtype=None, past_key_values_length=0):
-    """
-    Vanilla causal mask for training / prefill.
-    Shape: (seq_len, seq_len + past_len)
-    """
-    total_len = seq_len + past_key_values_length
-    mask = torch.full((seq_len, total_len), float('-inf'), device=device)
-    mask = torch.triu(mask, diagonal=past_key_values_length + 1)
-    return mask
-
-
-def create_olmo_causal_mask(
+def create_causal_mask(
     inputs_embeds,
     attention_mask=None,
     past_key_values_length=0,
     position_ids=None,
 ):
     """
-    Build a causal attention mask compatible with OlMo2-style generation.
+    Build a causal attention mask (with optional padding and kv-cache offset) for prefill and generation.
 
     inputs_embeds: (batch, seq, hidden_size) -- used for device/dtype
     attention_mask: optional (batch, seq) bool/int, 1 for real tokens, 0 for pad.

@@ -133,7 +133,7 @@ class ModelInspector:
                     for a in v:
                         if isinstance(a, fx.Node) and not a.name.startswith("_"):
                             edges.append({"from": a.name, "to": node.name})
-        # drop zero-degree nodes: params/buffers nothing consumes (e.g. olmo's
+        # drop zero-degree nodes: params/buffers nothing consumes (e.g. a model's
         # per-layer rope_inv_freq — rope runs once globally, these are dead
         # checkpoint artifacts). they carry no information and clutter the board.
         connected = {e["from"] for e in edges} | {e["to"] for e in edges}

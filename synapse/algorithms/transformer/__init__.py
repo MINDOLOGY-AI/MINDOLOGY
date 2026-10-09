@@ -1,1 +1,1 @@
-from .olmo2 import Olmo2DecoderLayer, Olmo2Model, Olmo2ForCausalLM
+from .qwen3_5 import Qwen3_5DecoderLayer, Qwen3_5TextModel, Qwen3_5ForCausalLM
