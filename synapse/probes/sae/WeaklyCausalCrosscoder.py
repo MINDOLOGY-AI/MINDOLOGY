@@ -12,12 +12,19 @@
 # shards:     a WCCShard holds the features of a subset of encoder layers so they can be split across GPUs (b_dec lives in
 #             one shard). its decode returns the partial reconstruction of its own features; the full x_hat is the sum over
 #             shards. a single shard owning every layer and b_dec is the whole crosscoder.
+# decoder memory: the decoders are ~95% of the parameters, so they are not nn.Parameters. the gpu holds a bf16 working copy
+#             (what every matmul reads) and a bf16 gradient accumulator; the fp32 master weights and their 8-bit adam state
+#             (bitsandbytes blockwise, the same kernel as bnb.optim.Adam8bit) live in pinned cpu memory and are streamed
+#             through the gpu in row chunks once per step for the update, which runs on the gpu. the small parameters
+#             (encoders, thresholds, b_dec) are ordinary nn.Parameters with an ordinary optimizer.
 # decode:     dense bf16 matmul while many features fire; once the batch's mean active count per token drops below
-#             SPARSE_BELOW the forward and the decoder gradient only touch active rows (embedding_bag). the gradient into the
-#             activations stays dense: the straight-through estimator needs it for features just below threshold.
+#             SPARSE_BELOW the forward only touches active rows (embedding_bag). the decoder gradient a^T g and the gradient
+#             into the activations g W^T stay dense matmuls: the straight-through estimator needs the latter for features
+#             just below threshold.
 
 import math
 
+import bitsandbytes.functional as BF
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -27,10 +34,17 @@ THETA_INIT = 0.03  # CLT paper: initial JumpReLU threshold
 BANDWIDTH = 1.0  # CLT paper: straight-through bandwidth eps
 C = 4.0  # tanh sharpness
 LAM_P = 3e-6  # pre-activation loss coefficient
-# mean active features per token (one encoder layer) under which decoding switches to the active rows only
+# mean active features per token (one encoder layer) under which the decode forward switches to the active rows only
 SPARSE_BELOW = 16
 # share of all features (every layer) firing per token right after init: b_enc is set so each fires 10000 / total features
 INIT_FIRING = 10000
+ADAM_BETAS = (0.9, 0.999)
+ADAM_EPS = 1e-8
+QBLOCK = 256  # bitsandbytes 8-bit blockwise state: one absmax per 256 elements
+CHUNK_ELEMS = 2 ** 26  # decoder elements per streamed update chunk (256MB of fp32 master)
+# bitsandbytes' signed / unsigned dynamic quantization maps for adam's first / second moment (what Adam8bit uses)
+QMAP1 = BF.create_dynamic_map(signed=True)
+QMAP2 = BF.create_dynamic_map(signed=False)
 
 
 class JumpReLU(torch.autograd.Function):
@@ -51,40 +65,32 @@ class JumpReLU(torch.autograd.Function):
 
 class Decode(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, a, W):
-        # a (N, F) activations (mostly zero), W (F, M) decoder -> (N, M) in fp32
-        sparse = (a > 0).sum().item() / a.shape[0] < SPARSE_BELOW
-        ctx.sparse = sparse
-        if sparse:
+    def forward(ctx, a, W, G):
+        # a (N, F) activations (mostly zero), W (F, M) bf16 decoder, G (F, M) bf16 gradient accumulator -> (N, M) fp32.
+        # backward adds a^T g into G (no autograd gradient for W)
+        ctx.save_for_backward(a, W)
+        ctx.G = G
+        if (a > 0).sum().item() / a.shape[0] < SPARSE_BELOW:
             rows, cols = a.nonzero(as_tuple=True)
             # (N + 1,) bag boundaries: token n's active features are cols[offsets[n]:offsets[n + 1]]
             offsets = torch.zeros(a.shape[0] + 1, dtype=torch.long, device=a.device)
             offsets[1:] = torch.bincount(rows, minlength=a.shape[0]).cumsum(0)
-            vals = a[rows, cols]
-            ctx.save_for_backward(a, W, cols, offsets, vals)
-            return F.embedding_bag(cols, W, offsets[:-1], per_sample_weights=vals, mode="sum")
-        ctx.save_for_backward(a, W)
-        # bf16 inputs, fp32 output written directly (no bf16 intermediate)
-        return torch.mm(a.bfloat16(), W.bfloat16(), out_dtype=torch.float32)
+            return F.embedding_bag(cols, W, offsets[:-1], per_sample_weights=a[rows, cols].bfloat16(), mode="sum").float()
+        # bf16 inputs, fp32 output written directly
+        return torch.mm(a.bfloat16(), W, out_dtype=torch.float32)
 
     @staticmethod
     def backward(ctx, g):
-        # (N, M) -> (N, F) dense: the straight-through estimator needs it for inactive features near their threshold
-        da = torch.mm(g.bfloat16(), ctx.saved_tensors[1].bfloat16().T, out_dtype=torch.float32)
-        if ctx.sparse:
-            _, W, cols, offsets, vals = ctx.saved_tensors
-            with torch.enable_grad():
-                W_ = W.detach().requires_grad_()
-                out = F.embedding_bag(cols, W_, offsets[:-1], per_sample_weights=vals, mode="sum")
-                dW, = torch.autograd.grad(out, W_, g)
-            return da, dW
-        a = ctx.saved_tensors[0]
-        # (F, N) @ (N, M) -> (F, M)
-        return da, torch.mm(a.bfloat16().T, g.bfloat16(), out_dtype=torch.float32)
+        a, W = ctx.saved_tensors
+        gb = g.bfloat16()
+        # (F, N) @ (N, M) accumulated into the bf16 gradient buffer
+        ctx.G.addmm_(a.bfloat16().T, gb)
+        # (N, M) @ (M, F) -> (N, F): dense, the straight-through estimator needs it for inactive features near threshold
+        return torch.mm(gb, W.T, out_dtype=torch.float32), None, None
 
 
 class WCCShard(nn.Module):
-    def __init__(self, layers, n_layers, d_in, n_features, owns_bias=False):
+    def __init__(self, layers, n_layers, d_in, n_features, device, owns_bias=False):
         # layers: encoder layers this shard owns, n_features: features per encoder layer
         super().__init__()
         self.layers = sorted(layers)
@@ -95,23 +101,55 @@ class WCCShard(nn.Module):
         self.W_enc = nn.ParameterDict()  # {str(i): (d_in, n_features)}
         self.b_enc = nn.ParameterDict()  # {str(i): (n_features,)}
         self.log_threshold = nn.ParameterDict()  # {str(i): (n_features,)}
-        self.W_dec = nn.ParameterDict()  # {str(i): (n_features, (n_layers - i) * d_in)} flattened over target layers i..
+        # decoder of layer i: (n_features, (n_layers - i) * d_in), one row per feature over target layers i.. laid end to end
+        self.dec_W = {}  # {i: bf16 gpu working copy}
+        self.dec_G = {}  # {i: bf16 gpu gradient accumulator}
+        self.dec_master = {}  # {i: fp32 pinned cpu master weights}
+        self.dec_adam = {}  # {i: {"s1", "s2": (n,) uint8, "absmax1", "absmax2": (n / QBLOCK,) fp32}} pinned cpu adam state
+        self.dec_norm = {}  # {i: (n_features,) fp32 gpu row norms of the master}
+        self.dec_norm_leaf = {}  # {i: (n_features,) leaf copy of dec_norm the losses differentiate, reset every step}
+        self.dec_step = 0  # adam steps taken by the decoders
         enc_bound = 1 / math.sqrt(n_features)
         dec_bound = 1 / math.sqrt(n_layers * d_in)
         for i in self.layers:
             # init depends only on the layer, so any split of layers over shards gives the same crosscoder
             g = torch.Generator().manual_seed(SEED + i)
-            self.W_enc[str(i)] = nn.Parameter((torch.rand(d_in, n_features, generator=g) * 2 - 1) * enc_bound)
-            self.b_enc[str(i)] = nn.Parameter(torch.zeros(n_features))
-            self.log_threshold[str(i)] = nn.Parameter(torch.full((n_features,), math.log(THETA_INIT)))
-            self.W_dec[str(i)] = nn.Parameter((torch.rand(n_features, (n_layers - i) * d_in, generator=g) * 2 - 1) * dec_bound)
+            self.W_enc[str(i)] = nn.Parameter((torch.rand(d_in, n_features, generator=g) * 2 - 1).mul_(enc_bound).to(device))
+            self.b_enc[str(i)] = nn.Parameter(torch.zeros(n_features, device=device))
+            self.log_threshold[str(i)] = nn.Parameter(torch.full((n_features,), math.log(THETA_INIT), device=device))
+            M = (n_layers - i) * d_in
+            assert M % QBLOCK == 0, f"decoder row length {M} must be a multiple of the adam block {QBLOCK}"
+            self.dec_master[i] = torch.empty(n_features, M, pin_memory=True).uniform_(-dec_bound, dec_bound, generator=g)
+            n = n_features * M
+            self.dec_adam[i] = {"s1": torch.zeros(n, dtype=torch.uint8, pin_memory=True),
+                                "s2": torch.zeros(n, dtype=torch.uint8, pin_memory=True),
+                                "absmax1": torch.zeros(n // QBLOCK, pin_memory=True),
+                                "absmax2": torch.zeros(n // QBLOCK, pin_memory=True)}
+            self.dec_W[i] = torch.empty(n_features, M, dtype=torch.bfloat16, device=device)
+            self.dec_G[i] = torch.zeros(n_features, M, dtype=torch.bfloat16, device=device)
+            self.dec_norm[i] = torch.empty(n_features, device=device)
             # tokens since each feature last fired (stats only)
-            self.register_buffer(f"tokens_since_fired_{i}", torch.zeros(n_features, dtype=torch.long))
+            self.register_buffer(f"tokens_since_fired_{i}", torch.zeros(n_features, dtype=torch.long, device=device))
+        self.refresh_decoders()
         if owns_bias:
             # (n_layers, d_in)
-            self.b_dec = nn.Parameter(torch.zeros(n_layers, d_in))
+            self.b_dec = nn.Parameter(torch.zeros(n_layers, d_in, device=device))
         # (n_layers,) per-layer input scaling, set by the trainer
-        self.register_buffer("norm_factor", torch.ones(n_layers))
+        self.register_buffer("norm_factor", torch.ones(n_layers, device=device))
+
+    def chunks(self, i):
+        # row ranges of layer i's decoder, ~CHUNK_ELEMS elements each -> [(r0, r1)]
+        rows = max(1, CHUNK_ELEMS // self.dec_master[i].shape[1])
+        return [(r, min(r + rows, self.n_features)) for r in range(0, self.n_features, rows)]
+
+    @torch.no_grad()
+    def refresh_decoders(self):
+        # bf16 working copies and row norms from the masters (after init or loading)
+        for i in self.layers:
+            for r0, r1 in self.chunks(i):
+                p = self.dec_master[i][r0:r1].to(self.dec_W[i].device)
+                self.dec_W[i][r0:r1] = p.bfloat16()
+                self.dec_norm[i][r0:r1] = p.norm(dim=1)
 
     def pre(self, x, i):
         # x (N, d_in) scaled residual of layer i -> (N, n_features) pre-activations
@@ -142,8 +180,13 @@ class WCCShard(nn.Module):
             a = JumpReLU.apply(h, self.log_threshold[str(i)])
             codes[i] = (h, a)
             # (N, F) -> (N, (L - i) * D) -> (N, L - i, D)
-            x_hat[:, i:] += Decode.apply(a, self.W_dec[str(i)]).view(N, L - i, D)
+            x_hat[:, i:] += Decode.apply(a, self.dec_W[i], self.dec_G[i]).view(N, L - i, D)
         return x_hat, codes
+
+    def begin_step(self):
+        # fresh leaves for the decoder row norms: their .grad sums the sparsity / pre-act losses' d/d||W_dec_f|| over the
+        # step's micro-batches
+        self.dec_norm_leaf = {i: self.dec_norm[i].clone().requires_grad_() for i in self.layers}
 
     def sparsity_losses(self, codes, lam):
         # summed tanh sparsity loss (times lam) and pre-activation loss over this shard's features, per token
@@ -151,10 +194,71 @@ class WCCShard(nn.Module):
         pa = 0.0
         for i, (h, a) in codes.items():
             # (F,) whole-row decoder norms
-            dn = self.W_dec[str(i)].norm(dim=1)
+            dn = self.dec_norm_leaf[i]
             sp = sp + torch.tanh(C * dn * a).sum(-1).mean()
             pa = pa + (torch.relu(self.log_threshold[str(i)].exp() - h) * dn).sum(-1).mean()
         return lam * sp, LAM_P * pa
+
+    def norm_grad_scale(self, i):
+        # (F,) d loss / d||W_dec_f|| / ||W_dec_f||: the full decoder gradient is dec_G + this[:, None] * W_dec
+        g = self.dec_norm_leaf[i].grad
+        assert g is not None, f"layer {i}: no gradient reached the decoder norms (sparsity_losses not in the backward?)"
+        return g / self.dec_norm[i]
+
+    @torch.no_grad()
+    def dec_grad_sq(self):
+        # sum of squares of the full decoder gradients of this shard (bf16 working weights stand in for the master)
+        total = torch.zeros((), device=self.norm_factor.device)
+        for i in self.layers:
+            s = self.norm_grad_scale(i)
+            for r0, r1 in self.chunks(i):
+                total += (self.dec_G[i][r0:r1].float() + s[r0:r1, None] * self.dec_W[i][r0:r1].float()).pow(2).sum()
+        return total
+
+    @torch.no_grad()
+    def dec_update(self, lr, grad_scale):
+        # one 8-bit adam step on every decoder, streamed through the gpu chunk by chunk: master + state in, gradient
+        # (dec_G + norm term, times grad_scale for clipping) formed against the fp32 master, bitsandbytes' blockwise update,
+        # master + state out, bf16 copy and row norms refreshed, gradient accumulator zeroed
+        self.dec_step += 1
+        dev = self.norm_factor.device
+        qmap1, qmap2 = QMAP1.to(dev), QMAP2.to(dev)
+        for i in self.layers:
+            s = self.norm_grad_scale(i)
+            M = self.dec_master[i].shape[1]
+            st = self.dec_adam[i]
+            for r0, r1 in self.chunks(i):
+                e0, e1 = r0 * M, r1 * M
+                p = self.dec_master[i][r0:r1].to(dev, non_blocking=True)
+                s1 = st["s1"][e0:e1].to(dev, non_blocking=True)
+                s2 = st["s2"][e0:e1].to(dev, non_blocking=True)
+                a1 = st["absmax1"][e0 // QBLOCK:e1 // QBLOCK].to(dev, non_blocking=True)
+                a2 = st["absmax2"][e0 // QBLOCK:e1 // QBLOCK].to(dev, non_blocking=True)
+                # (r1 - r0, M) fp32
+                g = (self.dec_G[i][r0:r1].float() + s[r0:r1, None] * p) * grad_scale
+                BF.optimizer_update_8bit_blockwise("adam", g, p, s1, s2, ADAM_BETAS[0], ADAM_BETAS[1], 0.0, 0.0, ADAM_EPS,
+                                                   self.dec_step, lr, qmap1, qmap2, a1, a2, 0.0, gnorm_scale=1.0,
+                                                   skip_zeros=False)
+                self.dec_master[i][r0:r1].copy_(p)
+                st["s1"][e0:e1].copy_(s1)
+                st["s2"][e0:e1].copy_(s2)
+                st["absmax1"][e0 // QBLOCK:e1 // QBLOCK].copy_(a1)
+                st["absmax2"][e0 // QBLOCK:e1 // QBLOCK].copy_(a2)
+                self.dec_W[i][r0:r1] = p.bfloat16()
+                self.dec_norm[i][r0:r1] = p.norm(dim=1)
+                self.dec_G[i][r0:r1].zero_()
+
+    def dec_state(self):
+        # everything the decoders need to resume: {"step": int, i: {"master", "s1", "s2", "absmax1", "absmax2"}}
+        return {"step": self.dec_step, **{i: {"master": self.dec_master[i], **self.dec_adam[i]} for i in self.layers}}
+
+    def load_dec_state(self, state):
+        self.dec_step = state["step"]
+        for i in self.layers:
+            self.dec_master[i].copy_(state[i]["master"])
+            for k in ("s1", "s2", "absmax1", "absmax2"):
+                self.dec_adam[i][k].copy_(state[i][k])
+        self.refresh_decoders()
 
     @torch.no_grad()
     def track_fired(self, codes):

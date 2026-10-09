@@ -165,15 +165,15 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
 
     owned = assign_layers(N_LAYERS, world)
     log(f"world {world}, layers per rank {owned}, {n_features} features per layer, lambda {lam}, {max_steps} steps of {step_chunks * T} tokens")
-    shard = WCCShard(owned[rank], N_LAYERS, D_IN, n_features, owns_bias=rank == 0).to(dev)
+    shard = WCCShard(owned[rank], N_LAYERS, D_IN, n_features, dev, owns_bias=rank == 0)
     lm = load_qwen3_5_model(device=dev)[0]
     lm.config.use_cache = False
     for p in lm.parameters():
         p.requires_grad = False
     cap = ResidCapture(lm)
 
-    # 8-bit adam states (blockwise quantized, bitsandbytes): 2 bytes per param instead of 8, what lets 8192 features per
-    # layer fit next to the LM on a 40GB card
+    # 8-bit adam states (blockwise quantized, bitsandbytes) for the small parameters; the decoders take the same update
+    # streamed from cpu memory (shard.dec_update)
     opt = bnb.optim.Adam8bit(shard.parameters(), lr=LR)
     decay_start = int(max_steps * (1 - LR_DECAY_FRAC))
     # lr multiplier per step: 1 until decay_start, then linear down to 0 at max_steps
@@ -188,8 +188,9 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
     trained = (weights_dir / "shared.pt").exists()
     if not trained and step_file.exists():
         start = int(step_file.read_text())
-        ck = torch.load(ckpt_dir / f"rank{rank}_step{start}.pt", map_location=dev)
+        ck = torch.load(ckpt_dir / f"rank{rank}_step{start}.pt", map_location="cpu")
         shard.load_state_dict(ck["shard"])
+        shard.load_dec_state(ck["dec"])
         opt.load_state_dict(ck["opt"])
         sched.load_state_dict(ck["sched"])
         losses = json.loads((results_dir / "losses.json").read_text())
@@ -219,6 +220,7 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
             l0 = {i: 0.0 for i in shard.layers}  # {layer: mean active features per token}
             sp_pa = torch.zeros(2, device=dev)  # (sparsity loss, pre-act loss) averaged over micro-batches
             opt.zero_grad(set_to_none=True)
+            shard.begin_step()
             # one LM pass over all of the step's chunks of this rank (one big forward is far cheaper than accum small ones)
             # (accum * chunks_per_rank * T, L, D) bf16
             step_resid = cap.run(chunks(train, perm, s, chunks_per_rank * accum))
@@ -239,14 +241,17 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
                 del x, partial, r, codes, sp, pa
             del step_resid
             mse = se / (N * accum)
-            # global grad norm over every rank's parameters
-            sq = torch.stack([p.grad.pow(2).sum() for p in shard.parameters()]).sum()
+            # global grad norm over every rank's parameters, decoders included
+            sq = torch.stack([p.grad.pow(2).sum() for p in shard.parameters()]).sum() + shard.dec_grad_sq()
             dist.all_reduce(sq)
             gnorm = sq.sqrt()
-            if gnorm > GRAD_CLIP:
-                for p in shard.parameters():
-                    p.grad.mul_(GRAD_CLIP / gnorm)
+            clip = min(1.0, GRAD_CLIP / gnorm.item())
+            for p in shard.parameters():
+                p.grad.mul_(clip)
+            # this step's lr, before the scheduler advances
+            lr = opt.param_groups[0]["lr"]
             opt.step()
+            shard.dec_update(lr, clip)
             sched.step()
 
             if (s + 1) % log_every == 0:
@@ -282,8 +287,8 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
                 log(f"test step {s + 1}: recon% mean {sum(recon) / N_LAYERS:.2f} per layer {[round(r, 1) for r in recon]}")
 
             if (s + 1) % save_every == 0:
-                torch.save({"shard": shard.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict()},
-                           ckpt_dir / f"rank{rank}_step{s + 1}.pt")
+                torch.save({"shard": shard.state_dict(), "dec": shard.dec_state(), "opt": opt.state_dict(),
+                            "sched": sched.state_dict()}, ckpt_dir / f"rank{rank}_step{s + 1}.pt")
                 dist.barrier()
                 if rank == 0:
                     (results_dir / "losses.json").write_text(json.dumps(losses))
@@ -297,7 +302,7 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
         for i in shard.layers:
             torch.save({"W_enc": shard.W_enc[str(i)].data, "b_enc": shard.b_enc[str(i)].data,
                         "log_threshold": shard.log_threshold[str(i)].data,
-                        "W_dec": shard.W_dec[str(i)].data.view(n_features, N_LAYERS - i, D_IN),
+                        "W_dec": shard.dec_master[i].view(n_features, N_LAYERS - i, D_IN),
                         "tokens_since_fired": getattr(shard, f"tokens_since_fired_{i}")}, weights_dir / f"L{i}.pt")
         dist.barrier()
         if rank == 0:
@@ -316,12 +321,13 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
         if rank == 0:
             shard.b_dec.data.copy_(sd["b_dec"])
         for i in shard.layers:
-            w = torch.load(weights_dir / f"L{i}.pt", map_location=dev)
+            w = torch.load(weights_dir / f"L{i}.pt")
             shard.W_enc[str(i)].data.copy_(w["W_enc"])
             shard.b_enc[str(i)].data.copy_(w["b_enc"])
             shard.log_threshold[str(i)].data.copy_(w["log_threshold"])
-            shard.W_dec[str(i)].data.copy_(w["W_dec"].flatten(1))
+            shard.dec_master[i].copy_(w["W_dec"].flatten(1))
             getattr(shard, f"tokens_since_fired_{i}").copy_(w["tokens_since_fired"])
+        shard.refresh_decoders()
     shard.zero_grad(set_to_none=True)
     del opt
     torch.cuda.empty_cache()
