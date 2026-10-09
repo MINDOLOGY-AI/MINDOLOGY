@@ -7,7 +7,7 @@ port the openmindfab CLI here. unify a serving function.
 Qwen3.5-4B SAEs, full run on a rented H100 80GB (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`, all 32 layers, one epoch ~1.5B tokens, groups of 8, ~55h):  
 - runpod H100 SXM pod: 150GB volume disk at /workspace (peak use ~100GB) + ~50GB container disk, ssh enabled  
 - clone the repo, `pip install -r requirements.txt`, `python -m evoke.Qwen3_5_4b.run.download`  
-- accept bigcode/starcoderdata's terms on hugging face, put the account's token in HF_TOKEN on the pod  
+- copy HF_TOKEN from the laptop's ~/.bashrc to the pod's (account codespaceDrifter, already accepted starcoderdata's gate)  
 - check `lucadiliello/bookcorpusopen` rows are natural-text books (field `text`) before downloading  
 - `python -m datasteps.interp_dataset.download_all`, then `python -m datasteps.interp_dataset.tokenize_interp_dataset` (2B tokens: train / test / eval)  
 - `python -m evoke.Qwen3_5_4b.interp.sae_resid_topk gpu` in tmux; first check peak memory + steps/s  
