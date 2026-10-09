@@ -11,6 +11,30 @@
         "max_examples": 10
     },
     "parts": {
+        "L0": {
+            "reads": "model.language_model.layers.0:out",
+            "writes": "model.language_model.layers.0:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L0.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L0.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L0.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L0"
+        },
+        "L1": {
+            "reads": "model.language_model.layers.1:out",
+            "writes": "model.language_model.layers.1:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L1.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L1.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L1.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L1"
+        },
+        "L2": {
+            "reads": "model.language_model.layers.2:out",
+            "writes": "model.language_model.layers.2:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L2.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L2.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L2.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L2"
+        },
         "L3": {
             "reads": "model.language_model.layers.3:out",
             "writes": "model.language_model.layers.3:out",
@@ -18,6 +42,30 @@
             "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L3.jsonl",
             "density": "results/Qwen3_5_4b/sae_resid_topk/density/L3.density.bin",
             "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L3"
+        },
+        "L4": {
+            "reads": "model.language_model.layers.4:out",
+            "writes": "model.language_model.layers.4:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L4.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L4.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L4.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L4"
+        },
+        "L5": {
+            "reads": "model.language_model.layers.5:out",
+            "writes": "model.language_model.layers.5:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L5.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L5.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L5.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L5"
+        },
+        "L6": {
+            "reads": "model.language_model.layers.6:out",
+            "writes": "model.language_model.layers.6:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L6.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L6.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L6.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L6"
         },
         "L7": {
             "reads": "model.language_model.layers.7:out",
@@ -27,6 +75,30 @@
             "density": "results/Qwen3_5_4b/sae_resid_topk/density/L7.density.bin",
             "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L7"
         },
+        "L8": {
+            "reads": "model.language_model.layers.8:out",
+            "writes": "model.language_model.layers.8:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L8.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L8.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L8.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L8"
+        },
+        "L9": {
+            "reads": "model.language_model.layers.9:out",
+            "writes": "model.language_model.layers.9:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L9.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L9.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L9.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L9"
+        },
+        "L10": {
+            "reads": "model.language_model.layers.10:out",
+            "writes": "model.language_model.layers.10:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L10.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L10.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L10.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L10"
+        },
         "L11": {
             "reads": "model.language_model.layers.11:out",
             "writes": "model.language_model.layers.11:out",
@@ -34,6 +106,30 @@
             "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L11.jsonl",
             "density": "results/Qwen3_5_4b/sae_resid_topk/density/L11.density.bin",
             "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L11"
+        },
+        "L12": {
+            "reads": "model.language_model.layers.12:out",
+            "writes": "model.language_model.layers.12:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L12.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L12.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L12.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L12"
+        },
+        "L13": {
+            "reads": "model.language_model.layers.13:out",
+            "writes": "model.language_model.layers.13:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L13.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L13.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L13.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L13"
+        },
+        "L14": {
+            "reads": "model.language_model.layers.14:out",
+            "writes": "model.language_model.layers.14:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L14.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L14.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L14.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L14"
         },
         "L15": {
             "reads": "model.language_model.layers.15:out",
@@ -43,6 +139,30 @@
             "density": "results/Qwen3_5_4b/sae_resid_topk/density/L15.density.bin",
             "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L15"
         },
+        "L16": {
+            "reads": "model.language_model.layers.16:out",
+            "writes": "model.language_model.layers.16:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L16.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L16.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L16.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L16"
+        },
+        "L17": {
+            "reads": "model.language_model.layers.17:out",
+            "writes": "model.language_model.layers.17:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L17.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L17.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L17.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L17"
+        },
+        "L18": {
+            "reads": "model.language_model.layers.18:out",
+            "writes": "model.language_model.layers.18:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L18.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L18.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L18.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L18"
+        },
         "L19": {
             "reads": "model.language_model.layers.19:out",
             "writes": "model.language_model.layers.19:out",
@@ -50,6 +170,30 @@
             "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L19.jsonl",
             "density": "results/Qwen3_5_4b/sae_resid_topk/density/L19.density.bin",
             "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L19"
+        },
+        "L20": {
+            "reads": "model.language_model.layers.20:out",
+            "writes": "model.language_model.layers.20:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L20.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L20.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L20.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L20"
+        },
+        "L21": {
+            "reads": "model.language_model.layers.21:out",
+            "writes": "model.language_model.layers.21:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L21.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L21.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L21.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L21"
+        },
+        "L22": {
+            "reads": "model.language_model.layers.22:out",
+            "writes": "model.language_model.layers.22:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L22.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L22.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L22.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L22"
         },
         "L23": {
             "reads": "model.language_model.layers.23:out",
@@ -59,6 +203,30 @@
             "density": "results/Qwen3_5_4b/sae_resid_topk/density/L23.density.bin",
             "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L23"
         },
+        "L24": {
+            "reads": "model.language_model.layers.24:out",
+            "writes": "model.language_model.layers.24:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L24.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L24.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L24.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L24"
+        },
+        "L25": {
+            "reads": "model.language_model.layers.25:out",
+            "writes": "model.language_model.layers.25:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L25.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L25.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L25.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L25"
+        },
+        "L26": {
+            "reads": "model.language_model.layers.26:out",
+            "writes": "model.language_model.layers.26:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L26.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L26.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L26.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L26"
+        },
         "L27": {
             "reads": "model.language_model.layers.27:out",
             "writes": "model.language_model.layers.27:out",
@@ -66,6 +234,30 @@
             "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L27.jsonl",
             "density": "results/Qwen3_5_4b/sae_resid_topk/density/L27.density.bin",
             "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L27"
+        },
+        "L28": {
+            "reads": "model.language_model.layers.28:out",
+            "writes": "model.language_model.layers.28:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L28.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L28.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L28.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L28"
+        },
+        "L29": {
+            "reads": "model.language_model.layers.29:out",
+            "writes": "model.language_model.layers.29:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L29.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L29.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L29.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L29"
+        },
+        "L30": {
+            "reads": "model.language_model.layers.30:out",
+            "writes": "model.language_model.layers.30:out",
+            "weights": "weights/evoke/Qwen3_5_4b/sae_resid_topk/L30.pt",
+            "labels": "results/Qwen3_5_4b/sae_resid_topk/labels/L30.jsonl",
+            "density": "results/Qwen3_5_4b/sae_resid_topk/density/L30.density.bin",
+            "picks": "results/Qwen3_5_4b/sae_resid_topk/picks/L30"
         },
         "L31": {
             "reads": "model.language_model.layers.31:out",

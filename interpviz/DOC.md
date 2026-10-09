@@ -119,7 +119,7 @@ a hook = a trained probe on the model: **reads** activations at a point, encodes
 
 # SAEs
 
-`models/qwen3_5_4b/hooks/sae_resid_topk.json`: the TopK SAEs of `synapse/interp/DOC.md` (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`), one part per trained layer `L3`, `L7`, ..., `L31` (the full-attention layers), each reading and writing `model.language_model.layers.i:out` (resid_post, the training hook). `encode` = `topk_64(relu((x·s - b_dec) W_enc + b_enc))`, so every token has ≤ 64 active latents and `max_features` = 64 shows all of them. labels, density and picks come from `results/Qwen3_5_4b/sae_resid_topk/`.
+`models/qwen3_5_4b/hooks/sae_resid_topk.json`: the TopK SAEs of `synapse/interp/DOC.md` (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`), one part per layer `L0`..`L31`, each reading and writing `model.language_model.layers.i:out` (resid_post, the training hook). `encode` = `topk_64(relu((x·s - b_dec) W_enc + b_enc))`, so every token has ≤ 64 active latents and `max_features` = 64 shows all of them. labels, density and picks come from `results/Qwen3_5_4b/sae_resid_topk/`.
 
 # tests
 
