@@ -1,5 +1,5 @@
-# weakly causal crosscoder (JumpReLU, Anthropic's recipe) over all 32 Qwen3.5-4B resid_post layers, one epoch of the train
-# split (loss checks on the test split), then a core eval on the eval split comparable to sae_resid_topk's core.json.
+# weakly causal crosscoder (JumpReLU, Anthropic's recipe) over all 32 Qwen3.5-4B resid_post layers, TRAIN_TOKENS of the
+# train split (loss checks on the test split), then a core eval on the eval split comparable to sae_resid_topk's core.json.
 # multi-gpu: every rank runs the LM on its own chunks, the residuals of all ranks are all-gathered, each rank owns the
 # features of a few encoder layers (balanced by decoder size), and the partial reconstructions are all-reduced.
 # resumes from the latest checkpoint.
@@ -29,6 +29,9 @@ N_LAYERS = 32
 D_IN = 2560
 CHUNKS_PER_RANK = 2  # x 128 tokens x 8 ranks = 2048 tokens per micro-batch (what fits next to the LM on a 40GB card)
 ACCUM = 16  # micro-batches per optimizer step: 32768 tokens per step, Anthropic's batch size
+# a third of the train split: Anthropic scale training steps sublinearly with dictionary size (~3B tokens for their 10M
+# feature 18L CLT); 262k features here
+TRAIN_TOKENS = 500_000_000
 LR = 2e-4
 LR_DECAY_FRAC = 0.2  # lr constant, then linear to 0 over this final fraction of steps
 GRAD_CLIP = 1.0  # global grad norm over every rank's parameters
@@ -125,7 +128,7 @@ def layer_vec(vals, dev):
     return v
 
 
-def main(n_features, lam, train_tokens=None, chunks_per_rank=CHUNKS_PER_RANK, accum=ACCUM, eval_batches=EVAL_BATCHES, eval_chunks=EVAL_CHUNKS,
+def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_RANK, accum=ACCUM, eval_batches=EVAL_BATCHES, eval_chunks=EVAL_CHUNKS,
          log_every=LOG_EVERY, test_every=TEST_EVERY, test_batches=TEST_BATCHES, save_every=SAVE_EVERY,
          weights_dir=WEIGHTS_DIR, results_dir=RESULTS_DIR):
     # n_features: features per encoder layer, lam: final tanh sparsity coefficient (ramped linearly from 0 over training)
