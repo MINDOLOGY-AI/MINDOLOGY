@@ -64,12 +64,13 @@ class Decode(torch.autograd.Function):
             ctx.save_for_backward(a, W, cols, offsets, vals)
             return F.embedding_bag(cols, W, offsets[:-1], per_sample_weights=vals, mode="sum")
         ctx.save_for_backward(a, W)
-        return (a.bfloat16() @ W.bfloat16()).float()
+        # bf16 inputs, fp32 output written directly (no bf16 intermediate)
+        return torch.mm(a.bfloat16(), W.bfloat16(), out_dtype=torch.float32)
 
     @staticmethod
     def backward(ctx, g):
         # (N, M) -> (N, F) dense: the straight-through estimator needs it for inactive features near their threshold
-        da = (g.bfloat16() @ ctx.saved_tensors[1].bfloat16().T).float()
+        da = torch.mm(g.bfloat16(), ctx.saved_tensors[1].bfloat16().T, out_dtype=torch.float32)
         if ctx.sparse:
             _, W, cols, offsets, vals = ctx.saved_tensors
             with torch.enable_grad():
@@ -79,7 +80,7 @@ class Decode(torch.autograd.Function):
             return da, dW
         a = ctx.saved_tensors[0]
         # (F, N) @ (N, M) -> (F, M)
-        return da, (a.bfloat16().T @ g.bfloat16()).float()
+        return da, torch.mm(a.bfloat16().T, g.bfloat16(), out_dtype=torch.float32)
 
 
 class WCCShard(nn.Module):

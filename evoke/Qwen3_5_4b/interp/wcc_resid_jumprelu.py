@@ -149,12 +149,12 @@ def main(n_features, lam, train_tokens=None, chunks_per_rank=CHUNKS_PER_RANK, ac
     evals = np.memmap(BIN_DIR / "eval.bin", dtype=np.int32, mode="r", shape=tuple(meta["eval_shape"]))
     step_chunks = chunks_per_rank * world * accum
     max_steps = (train_tokens // T if train_tokens else len(train)) // step_chunks
-    # (n_chunks,) one fixed shuffle of the train chunks; micro-batch m (= step * accum + i), rank r reads
-    # perm[(m * world + r) * chunks_per_rank:][:chunks_per_rank]
+    # (n_chunks,) one fixed shuffle of the train chunks; step s, rank r reads perm[(s * world + r) * chunks_per_rank * accum:]
+    # [:chunks_per_rank * accum] (its accum micro-batches)
     perm = torch.randperm(len(train), generator=torch.Generator().manual_seed(SEED)).numpy()
 
     def chunks(arr, order, s, n):
-        # this rank's n chunks of micro-batch s (order=None: in file order) -> (n, T) int64 on gpu
+        # this rank's n chunks of batch s (order=None: in file order) -> (n, T) int64 on gpu
         sel = np.arange((s * world + rank) * n, (s * world + rank + 1) * n)
         if order is not None:
             sel = np.sort(order[sel])
@@ -216,8 +216,12 @@ def main(n_features, lam, train_tokens=None, chunks_per_rank=CHUNKS_PER_RANK, ac
             l0 = {i: 0.0 for i in shard.layers}  # {layer: mean active features per token}
             sp_pa = torch.zeros(2, device=dev)  # (sparsity loss, pre-act loss) averaged over micro-batches
             opt.zero_grad(set_to_none=True)
+            # one LM pass over all of the step's chunks of this rank (one big forward is far cheaper than accum small ones)
+            # (accum * chunks_per_rank * T, L, D) bf16
+            step_resid = cap.run(chunks(train, perm, s, chunks_per_rank * accum))
+            n_micro = chunks_per_rank * T  # tokens per rank per micro-batch
             for m in range(accum):
-                x, partial, r, codes = reconstruct(shard, cap.run(chunks(train, perm, s * accum + m, chunks_per_rank)))
+                x, partial, r, codes = reconstruct(shard, step_resid[m * n_micro:(m + 1) * n_micro])
                 N = x.shape[0]
                 sp, pa = shard.sparsity_losses(codes, lam_s)
                 # d/dpartial of the micro-batch's mean sum_j ||x_hat_j - x_j||^2 is 2 r / N; every loss averaged over micro-batches
@@ -230,6 +234,7 @@ def main(n_features, lam, train_tokens=None, chunks_per_rank=CHUNKS_PER_RANK, ac
                 for i in l0:
                     l0[i] += l0_m[i] / accum
                 del x, partial, r, codes, sp, pa
+            del step_resid
             mse = se / (N * accum)
             # global grad norm over every rank's parameters
             sq = torch.stack([p.grad.pow(2).sum() for p in shard.parameters()]).sum()
@@ -247,12 +252,17 @@ def main(n_features, lam, train_tokens=None, chunks_per_rank=CHUNKS_PER_RANK, ac
                     l0_v = layer_vec(l0, dev).tolist()
                     dead_v = layer_vec(dead, dev).tolist()
                     dist.all_reduce(sp_pa)
+                    # max over ranks of the peak allocated memory since the last log, GiB
+                    peak = torch.tensor(torch.cuda.max_memory_allocated() / 2**30, device=dev)
+                    dist.all_reduce(peak, op=dist.ReduceOp.MAX)
+                    torch.cuda.reset_peak_memory_stats()
                 losses["train"].append({"step": s + 1, "lam": lam_s, "mse": mse.sum().item(), "sparsity": sp_pa[0].item(),
                                         "preact": sp_pa[1].item(), "grad_norm": gnorm.item(), "recon_err_pct": recon,
-                                        "l0": l0_v, "dead_frac": dead_v})
+                                        "l0": l0_v, "dead_frac": dead_v, "peak_mem_gib": peak.item()})
                 log(f"step {s + 1}/{max_steps} {(time.time() - t0) / log_every:.2f}s/step lam {lam_s:.3g} gnorm {gnorm.item():.2f} "
                     f"recon% mean {sum(recon) / N_LAYERS:.1f} L0 {recon[0]:.1f} L16 {recon[16]:.1f} L31 {recon[31]:.1f} | "
-                    f"l0 total {sum(l0_v):.0f} L0 {l0_v[0]:.0f} L16 {l0_v[16]:.0f} L31 {l0_v[31]:.0f} | dead mean {sum(dead_v) / N_LAYERS:.3f} max {max(dead_v):.3f}")
+                    f"l0 total {sum(l0_v):.0f} L0 {l0_v[0]:.0f} L16 {l0_v[16]:.0f} L31 {l0_v[31]:.0f} | dead mean {sum(dead_v) / N_LAYERS:.3f} max {max(dead_v):.3f} | "
+                    f"mem {peak.item():.1f}G")
                 t0 = time.time()
 
             if (s + 1) % test_every == 0:
@@ -260,7 +270,7 @@ def main(n_features, lam, train_tokens=None, chunks_per_rank=CHUNKS_PER_RANK, ac
                     se = torch.zeros(N_LAYERS, device=dev)
                     sx = torch.zeros(N_LAYERS, device=dev)
                     for b in range(test_batches * accum):
-                        x, _, r, _ = reconstruct(shard, cap.run(chunks(test, None, b, chunks_per_rank)))
+                        x, _, r, _ = reconstruct(shard, cap.run(chunks(test, None, b, chunks_per_rank)))  # small: test only
                         se += r.pow(2).sum(-1).sum(0)
                         sx += x_sq(shard, x)
                         del x, r
