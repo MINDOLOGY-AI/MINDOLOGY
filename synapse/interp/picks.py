@@ -239,5 +239,6 @@ def gather_picks(hooked, source_bin, source_shape, hook_names, n_chunks, out_dir
             tracker.update(name, hooked.acts[name], chunk_ids)
         print(f"  chunks {end}/{n_chunks}")
 
-    tracker.save(out_dir, {"n_chunks": n_chunks, "context_chunk_size": ctx_len, "source_dataset": str(source_bin)})
+    # repo-relative, so the picks still resolve after copying the repo + data to another machine
+    tracker.save(out_dir, {"n_chunks": n_chunks, "context_chunk_size": ctx_len, "source_dataset": str(Path(source_bin).resolve().relative_to(Path.cwd()))})
     print(f"wrote picks for {len(hook_names)} hooks over {n_chunks} chunks to {out_dir}")

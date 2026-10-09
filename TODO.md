@@ -4,11 +4,12 @@ port the openmindfab CLI here. unify a serving function.
 
 - Fix Up Labeling Prompt
 
-Qwen3.5-4B SAEs on weighty (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`, 8 full-attention layers x 500M tokens):  
-- `git pull`, rename the text dir: `mv data/datasteps/txt/olmo2_1b_interp_dataset data/datasteps/txt/interp_dataset`  
-- tokenize: `python -m datasteps.interp_dataset.tokenize_interp_dataset` (~1.2B tokens)  
-- short trial first: peak memory + steps/s for groups of 4 at 4096 tokens/step (the limited decoder's speedup shows here too)  
-- full run (~a day), then picks + labels (8 x 40960 = 327,680 features, ~$52)  
+Qwen3.5-4B SAEs, full run on a rented H100 80GB (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`, all 32 layers, one epoch ~1.15B tokens, groups of 8, ~40h):  
+- runpod: network volume ~150GB in an H100 SXM datacenter, pod with it mounted + ssh  
+- upload `data/datasteps/txt/interp_dataset`, download Qwen on the pod, tokenize (`python -m datasteps.interp_dataset.tokenize_interp_dataset`)  
+- `python -m evoke.Qwen3_5_4b.interp.sae_resid_topk gpu` in tmux; first check peak memory + steps/s  
+- copy back weights + results + `train.bin`, then `... sae_resid_topk label` on the laptop (1.31M features, ~$210)  
+- next experiment against this baseline: bf16 SAE matmuls (one layer)  
 
 SAE search (`TopKSAE.py`, L8 short runs vs the current recipe on the same eval):  
 - AuxK stronger + earlier: dead threshold 10M tokens -> lower (e.g. 1M / 250k) so rare-but-alive features get aux gradient too; aux_coeff 1/32 -> higher  

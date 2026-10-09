@@ -1,13 +1,17 @@
-# TopK SAEs (k=64, 16x) on Qwen3.5-4B resid_post of the LAYERS, TRAIN_TOKENS training tokens each, then core bench per
+# TopK SAEs (k=64, 16x) on Qwen3.5-4B resid_post of the LAYERS, one epoch of the train split each, then core bench per
 # layer, picks for every feature, and labels + detection scores for every feature. every phase resumes from what is
-# already on disk.
-# run from repo root: python -m evoke.Qwen3_5_4b.interp.sae_resid_topk
+# already on disk (training mid-group from its latest checkpoint).
+# run from repo root, two phases:
+#   python -m evoke.Qwen3_5_4b.interp.sae_resid_topk gpu     train + core eval + picks (the gpu box)
+#   python -m evoke.Qwen3_5_4b.interp.sae_resid_topk label   labels + scores + summary (api-bound: any machine with the
+#                                                              repo, the picks and the tokenized train.bin)
 # outputs: weights/evoke/Qwen3_5_4b/sae_resid_topk/L<i>.pt
 #          results/Qwen3_5_4b/sae_resid_topk/{core.json, density/, picks/, labels/, autointerp.json, summary.md}
 
 import asyncio
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -25,17 +29,15 @@ from synapse.train.simple_train import simple_train, _to_cuda
 BIN_DIR = Path.cwd() / "data" / "datasteps" / "tokenized" / "qwen3_5_4b_interp_dataset"
 WEIGHTS_DIR = Path.cwd() / "weights" / "evoke" / "Qwen3_5_4b" / "sae_resid_topk"
 RESULTS_DIR = Path.cwd() / "results" / "Qwen3_5_4b" / "sae_resid_topk"
-# the 8 full-attention layers (every 4th; the others are Gated DeltaNet linear attention). cost: the 4B forward reruns
-# per group and each 40960-feature encoder is ~0.6 GFLOP/token, so 8 layers x 500M tokens is ~a day on the 5090
-LAYERS = [3, 7, 11, 15, 19, 23, 27, 31]
-# SAEs trained together in one LM pass (forward stops at the group's deepest layer); each SAE holds ~3.4GB of fp32
-# params + grads + adam state next to the 8.5GB bf16 model on 32GB
-GROUP_SIZE = 4
+LAYERS = list(range(32))
+# SAEs trained together in one LM pass (forward stops at the group's deepest layer), sized for an 80GB H100: each SAE holds
+# ~3.4GB of fp32 params + grads + adam state and ~3GB of activations at 8192 tokens/step, next to the 8.5GB bf16 model
+GROUP_SIZE = 8
 D_IN = 2560
 EXPANSION = 16
 K = 64
-TRAIN_TOKENS = 500_000_000
-BATCH_CHUNKS = 32  # x 128 = 4096 tokens per step (a 40960-wide fp32 pre-activation is 0.67GB per SAE)
+TRAIN_TOKENS = None  # None = one epoch of the train split
+BATCH_CHUNKS = 64  # x 128 = 8192 tokens per step
 LR = 3e-4
 LR_DECAY_FRAC = 0.2  # lr constant, then linear to 0 over this final fraction of steps (dictionary_learning TopK recipe)
 EVAL_BATCHES = 200
@@ -75,7 +77,7 @@ def train_group(lm, layers, expansion, train_ds, eval_ds, train_tokens, batch_ch
     # lr multiplier per step: 1 until decay_start, then linear down to 0 at max_steps
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: min(1.0, (max_steps - step) / (max_steps - decay_start)))
     simple_train(trainer, train_ds, batch_chunks, opt, epochs=1, save_path=str(group_dir), batches_per_log=200,
-                 batches_per_save=2000, eval_dataset=eval_ds, max_steps=max_steps, scheduler=sched)
+                 batches_per_save=2000, eval_dataset=eval_ds, max_steps=max_steps, scheduler=sched, resume=True)
     trainer.remove_hooks()
     for i in layers:
         torch.save(saes[i].state_dict(), weights_dir / f"L{i}.pt")
@@ -142,10 +144,12 @@ def evaluate_core(lm, saes, layers, eval_ds, n_batches, batch_chunks):
     return {"ce_clean": ce_clean, "n_eval_tokens": n_tokens, "density_bins": ["never", "<1e-5", "1e-5..1e-4", "1e-4..1e-3", "1e-3..1e-2", "1e-2..1e-1", ">=1e-1"], "saes": stats}, density
 
 
-def main(layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens=TRAIN_TOKENS, batch_chunks=BATCH_CHUNKS,
+def main(phase, layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens=TRAIN_TOKENS, batch_chunks=BATCH_CHUNKS,
          eval_batches=EVAL_BATCHES, eval_batch_chunks=EVAL_BATCH_CHUNKS, pick_chunks=PICK_CHUNKS, label_limit=None,
          weights_dir=WEIGHTS_DIR, results_dir=RESULTS_DIR):
+    # phase: "gpu" = train + core eval + picks, "label" = labels + scores + summary
     # label_limit: label only the first n units per layer (None = every unit); for smoke tests
+    assert phase in ("gpu", "label"), f"phase must be gpu or label, got {phase!r}"
     torch.backends.cuda.matmul.allow_tf32 = True  # tf32 matmuls: ~2x faster SAE training, standard for SAE training
     torch.manual_seed(SEED)
     weights_dir.mkdir(parents=True, exist_ok=True)
@@ -153,60 +157,61 @@ def main(layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens
     meta = json.loads((BIN_DIR / "meta.json").read_text())
     train_ds = BinUnsupervisedDataset(str(BIN_DIR / "train.bin"), torch.int32, tuple(meta["train_shape"]))
     eval_ds = BinUnsupervisedDataset(str(BIN_DIR / "eval.bin"), torch.int32, tuple(meta["eval_shape"]))
+    if train_tokens is None:
+        train_tokens = meta["train_shape"][0] * meta["chunk_size"]
     assert train_tokens <= meta["train_shape"][0] * meta["chunk_size"], f"train split has only {meta['train_shape'][0] * meta['chunk_size']:,} tokens"
     names = {i: f"L{i}" for i in layers}  # {layer: sae / hook name}
     core_path = results_dir / "core.json"
     core = json.loads(core_path.read_text()) if core_path.exists() else {"saes": {}}
     picks_dir = results_dir / "picks"
     labels_dir = results_dir / "labels"
-    # the LM is only needed for train / eval / picks; labeling alone needs just the tokenizer
-    need_lm = not (picks_dir / "meta.json").exists() or not all("recon_err_pct" in core["saes"].get(names[i], {}) for i in layers)
-    lm = load_qwen3_5_model()[0] if need_lm else None
-    if lm is not None:
+    if phase == "gpu":
+        lm = load_qwen3_5_model()[0]
         # no kv / recurrent-state cache: every forward here is a single full pass
         lm.config.use_cache = False
+
+        # --- phase 1: train + core eval, group by group (skips groups whose weights exist) ---
+        for g in range(0, len(layers), group_size):
+            group = layers[g:g + group_size]
+            if all("recon_err_pct" in core["saes"].get(names[i], {}) for i in group):
+                print(f"group {group}: already trained + evaluated, skipping", flush=True)
+                continue
+            if all((weights_dir / f"L{i}.pt").exists() for i in group):
+                print(f"=== layers {group}: weights exist, loading for eval ===", flush=True)
+                saes = {i: make_sae(expansion) for i in group}
+                for i in group:
+                    saes[i].load_state_dict(torch.load(weights_dir / f"L{i}.pt"))
+                    saes[i].cuda()
+            else:
+                print(f"=== training layers {group} ===", flush=True)
+                saes = train_group(lm, group, expansion, train_ds, eval_ds, train_tokens, batch_chunks, meta["chunk_size"], weights_dir, results_dir)
+            c, density = evaluate_core(lm, {names[i]: saes[i] for i in group}, {names[i]: i for i in group}, eval_ds, eval_batches, eval_batch_chunks)
+            (results_dir / "density").mkdir(exist_ok=True)
+            for n, d in density.items():
+                d.tofile(results_dir / "density" / f"{n}.density.bin")  # (D,) float64 firing fraction on eval tokens
+            core["ce_clean"] = c["ce_clean"]
+            core["density_bins"] = c["density_bins"]
+            core["saes"].update(c["saes"])
+            core["config"] = {"k": K, "expansion": expansion, "train_tokens": train_tokens, "lr": LR, "lr_decay_frac": LR_DECAY_FRAC, "group_size": group_size,
+                              "eval_tokens": eval_batches * eval_batch_chunks * meta["chunk_size"]}
+            core_path.write_text(json.dumps(core, indent=2))
+            print(json.dumps({n: core["saes"][n] for n in (names[i] for i in group)}, indent=2), flush=True)
+            del saes
+            torch.cuda.empty_cache()
+
+        # --- phase 2: picks for every feature of every layer (one pass, all SAEs loaded) ---
+        if not (picks_dir / "meta.json").exists():
+            saes = {}  # {name: (layer, sae)}
+            for i in layers:
+                sae = make_sae(expansion)
+                sae.load_state_dict(torch.load(weights_dir / f"L{i}.pt"))
+                saes[names[i]] = (i, sae.cuda().eval())
+            gather_picks(HookedQwenSAE(lm, saes), BIN_DIR / "train.bin", tuple(meta["train_shape"]), list(saes), pick_chunks, picks_dir, PICK_BATCH_CHUNKS)
+        print(f"gpu phase done: weights in {weights_dir}, core.json + density + picks in {results_dir}", flush=True)
+        return
+
+    # phase == "label"
     tokenizer = load_qwen3_5_tokenizer()
-
-    # --- phase 1: train + core eval, group by group (skips groups whose weights exist) ---
-    for g in range(0, len(layers), group_size):
-        group = layers[g:g + group_size]
-        if all("recon_err_pct" in core["saes"].get(names[i], {}) for i in group):
-            print(f"group {group}: already trained + evaluated, skipping", flush=True)
-            continue
-        if all((weights_dir / f"L{i}.pt").exists() for i in group):
-            print(f"=== layers {group}: weights exist, loading for eval ===", flush=True)
-            saes = {i: make_sae(expansion) for i in group}
-            for i in group:
-                saes[i].load_state_dict(torch.load(weights_dir / f"L{i}.pt"))
-                saes[i].cuda()
-        else:
-            print(f"=== training layers {group} ===", flush=True)
-            saes = train_group(lm, group, expansion, train_ds, eval_ds, train_tokens, batch_chunks, meta["chunk_size"], weights_dir, results_dir)
-        c, density = evaluate_core(lm, {names[i]: saes[i] for i in group}, {names[i]: i for i in group}, eval_ds, eval_batches, eval_batch_chunks)
-        (results_dir / "density").mkdir(exist_ok=True)
-        for n, d in density.items():
-            d.tofile(results_dir / "density" / f"{n}.density.bin")  # (D,) float64 firing fraction on eval tokens
-        core["ce_clean"] = c["ce_clean"]
-        core["density_bins"] = c["density_bins"]
-        core["saes"].update(c["saes"])
-        core["config"] = {"k": K, "expansion": expansion, "train_tokens": train_tokens, "lr": LR, "lr_decay_frac": LR_DECAY_FRAC, "group_size": group_size,
-                          "eval_tokens": eval_batches * eval_batch_chunks * meta["chunk_size"]}
-        core_path.write_text(json.dumps(core, indent=2))
-        print(json.dumps({n: core["saes"][n] for n in (names[i] for i in group)}, indent=2), flush=True)
-        del saes
-        torch.cuda.empty_cache()
-
-    # --- phase 2: picks for every feature of every layer (one pass, all SAEs loaded) ---
-    if not (picks_dir / "meta.json").exists():
-        saes = {}  # {name: (layer, sae)}
-        for i in layers:
-            sae = make_sae(expansion)
-            sae.load_state_dict(torch.load(weights_dir / f"L{i}.pt"))
-            saes[names[i]] = (i, sae.cuda().eval())
-        gather_picks(HookedQwenSAE(lm, saes), BIN_DIR / "train.bin", tuple(meta["train_shape"]), list(saes), pick_chunks, picks_dir, PICK_BATCH_CHUNKS)
-        del saes
-        torch.cuda.empty_cache()
-
     # --- phase 3: label + score every feature (resumes from the jsonl files) ---
     units = {names[i]: list(range(label_limit)) for i in layers} if label_limit else None
     n_failed = asyncio.run(label_units(picks_dir, labels_dir, tokenizer, MODEL, [names[i] for i in layers], workers=WORKERS,
@@ -235,10 +240,10 @@ def main(layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens
                        "|---|---|---|---|---|---|---|---|---|", *rows])
     (results_dir / "summary.md").write_text(
         f"# TopK SAEs (k={K}, {expansion}x) on Qwen3.5-4B resid_post, layers {layers}\n\n"
-        f"train {train_tokens:,} tokens per SAE, lr {LR} (linear decay over the last {LR_DECAY_FRAC:.0%}), groups of {group_size}. picks over {pick_chunks * meta['chunk_size']:,} tokens. "
+        f"train {train_tokens:,} tokens per SAE, lr {LR} (linear decay over the last {LR_DECAY_FRAC:.0%}), groups of {core['config']['group_size']}. picks over {pick_chunks * meta['chunk_size']:,} tokens. "
         f"labeler {MODEL}. clean CE {core['ce_clean']:.3f}.\n\n{table}\n")
     print(table, flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1])

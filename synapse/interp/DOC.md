@@ -22,7 +22,7 @@ per unit:
 - **quantiles** — p0..p100 per batch, averaged over batches (p100 = mean batch max). only used for the p99 fire threshold.  
 
 output `results/<model>/<run>/picks/` (empty slot: `chunk = -1`):  
-- `meta.json` — `{n_chunks, n_tokens, context_chunk_size, source_dataset, window_before, window_after, top_k, iw_k, n_random, n_quantiles, hooks: {name: D}}`  
+- `meta.json` — `{n_chunks, n_tokens, context_chunk_size, source_dataset (repo-relative), window_before, window_after, top_k, iw_k, n_random, n_quantiles, hooks: {name: D}}`  
 - `<hook>.pick_chunk.bin` / `.pick_pos.bin` — `(D, 40) int32 / int8`, slots 0..19 top-k strongest first, 20..39 iw  
 - `<hook>.windows.bin` — `(D, 40, 21) fp16`, `[:, :, 10]` = the picked token  
 - `<hook>.random_chunk.bin` / `.random_pos.bin` / `.random_windows.bin` — `(D, 20)` / `(D, 20)` / `(D, 20, 21)`  
@@ -81,7 +81,7 @@ model: `f = topk_k(relu((x·s - b_dec) W_enc + b_enc))`, `x̂ = (f W_dec + b_dec
 - `b_dec` is subtracted before encoding (features encode deviations from it), `b_enc` is a per-feature threshold shift  
 - AuxK (Gao et al.): dead = not fired on any token for 10M tokens (per-feature counter, reset when it fires in a batch). per token, the 512 dead features with the highest pre-activation reconstruct the residual `x - x̂` (detached); `aux_loss = 1/32 · ‖embedding_bag(aux idx, W_dec, aux vals) - (x - x̂)‖²` (no `b_dec`). training loss only: `x̂` always uses the 64 TopK winners  
 
-training: resid_post of the 8 full-attention layers (3, 7, ..., 31), groups of 4 SAEs per LM pass (forward stops after the deepest hooked layer), 500M tokens each from `qwen3_5_4b_interp_dataset` (`datasteps/interp_dataset/tokenize_interp_dataset.py`: the interp text with the Qwen tokenizer, doc + `<|endoftext|>` per doc, 128-token chunks shuffled with seed 21, last 50M tokens eval, the rest train), 4096 tokens/step (122070 steps), Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32, torch seed 21, the model in exact bf16.  
+training: resid_post of all 32 layers, groups of 8 SAEs per LM pass (forward stops after the deepest hooked layer; sized for an 80GB H100), one epoch of the train split each (~1.15B tokens) from `qwen3_5_4b_interp_dataset` (`datasteps/interp_dataset/tokenize_interp_dataset.py`: the interp text with the Qwen tokenizer, doc + `<|endoftext|>` per doc, 128-token chunks shuffled with seed 21, last 50M tokens eval, the rest train), 8192 tokens/step, Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32, torch seed 21, the model in exact bf16. two phases: `gpu` (train → core eval → picks) and `label` (labels + scores + summary, api-bound, any machine); training resumes mid-group from its latest checkpoint (every 2000 steps; resumed = identical weights to an uninterrupted run), finished groups and phases are skipped.  
 
 # Sae Eval  
 core eval (200 eval batches of 2048 tokens, 410k tokens), `x` = residual after layer i, `x̂` = SAE reconstruction:  
