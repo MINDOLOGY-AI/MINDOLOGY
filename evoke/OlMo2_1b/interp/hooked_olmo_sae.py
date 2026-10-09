@@ -23,4 +23,7 @@ class HookedOlmoSAE(HookedModel):
                 layer, sae = self.saes[name]
                 resid = self.acts[f"resid.{layer}"]  # (b, L, d_in)
                 b, L, d = resid.shape
-                self.acts[name] = sae.encode(resid.reshape(-1, d).float()).view(b, L, -1)
+                # (b*L, d_in) -> (b*L, k), (b*L, k)
+                vals, idx = sae.encode(resid.reshape(-1, d).float())
+                # (b*L, k) -> (b, L, d_sae): the picks tracker needs every feature's value
+                self.acts[name] = torch.zeros(b * L, sae.d_sae, device=vals.device).scatter_(-1, idx, vals).view(b, L, -1)

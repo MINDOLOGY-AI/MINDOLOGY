@@ -44,13 +44,20 @@
             <input id="sae-n" type="number" min="0" value="20" title="tokens to generate">
             <button id="btn-sae-generate">generate</button>
             <span class="sep"></span>
+            <button id="btn-sae-attr" title="color by attribution to one token's prediction">attribute</button>
+            <span id="sae-attr-info"></span>
+            <span id="sae-edits"></span>
+            <span class="sep"></span>
             <input id="sae-output" type="text" readonly placeholder="model output">
         </div>
     </div>
     <board-canvas id="board"></board-canvas>
     <div id="sae-view" style="display:none;">
         <div id="sae-grid"></div>
-        <div id="sae-side"></div>
+        <div id="sae-side">
+            <div id="sae-side-top"></div>
+            <div id="sae-side-bottom"></div>
+        </div>
     </div>
 
     <script type="module" src="components/BoardCanvas/BoardCanvas.js"></script>

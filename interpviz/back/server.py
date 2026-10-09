@@ -3,6 +3,7 @@
 # static files served from front/
 # launched by interpviz/app.py
 
+import copy
 import importlib
 import json
 import traceback
@@ -16,6 +17,8 @@ from transformers.convert_slow_tokenizer import bytes_to_unicode
 
 from interpviz.back.config import DEVICE
 from interpviz.back.hooks import HookSet
+from synapse.interp.sae_attribute import attribute
+from synapse.interp.sae_intervene import edited
 from interpviz.back.inspector import ModelInspector
 from interpviz.back.layout import compute_layout, compute_effective_graph
 from interpviz.back.routing import compute_routes
@@ -61,6 +64,27 @@ token_bytes: list[bytes] | None = None
 hook_sets: dict | None = None
 # top next-token guesses shown per position
 N_NEXT = 5
+# most results a label search returns
+SEARCH_LIMIT = 50
+# {(set, part): (read point, probe)} every loaded hook part, the saes argument of attribute / edited
+sae_probes = None
+# (1, T) token ids of the last sae_run (prompt + generated), what sae_attribute explains
+sae_ids = None
+# [((set, part), pos, feature id, value)] the feature edits of the last sae_run, also applied by sae_attribute
+sae_edits = []
+# the sae tab's model on cpu: an fp32 copy of the loaded bf16 model. cpus without native bf16 (avx2) emulate it,
+# ~300x slower for attribution's backward. made on the first sae request on cpu, dropped on a device change
+cpu_fp32_model = None
+
+
+def sae_model():
+    # the eager model the sae tab runs: on gpu the loaded (bf16) model, on cpu its fp32 copy
+    global cpu_fp32_model
+    if device == "cuda":
+        return inspector.model
+    if cpu_fp32_model is None:
+        cpu_fp32_model = copy.deepcopy(inspector.model).float()
+    return cpu_fp32_model
 
 DTYPE_MAP = {
     "float16": torch.float16,
@@ -179,7 +203,7 @@ def _build_display():
 
 
 def handle(msg):
-    global inspector, meta, meta_folder, raw_graph, device, tokenizer, token_bytes, hook_sets
+    global inspector, meta, meta_folder, raw_graph, device, tokenizer, token_bytes, hook_sets, sae_probes, sae_ids, sae_edits, cpu_fp32_model
     t = msg["type"]
 
     if t == "load_meta":
@@ -188,6 +212,9 @@ def handle(msg):
         tokenizer = None
         token_bytes = None
         hook_sets = None
+        sae_probes = None
+        sae_ids = None
+        cpu_fp32_model = None
         meta_folder = msg["folder"]
         meta = load_meta(meta_folder)
         return {"type": t, "device": device, **meta}
@@ -239,6 +266,8 @@ def handle(msg):
             inspector.gm.to(device=target)
             # captured tensors are stale (old device) — force a fresh forward
             inspector.captured_tensors = {}
+            cpu_fp32_model = None
+            sae_ids = None
         device = target
         return {"type": t, "device": device}
 
@@ -375,7 +404,10 @@ def handle(msg):
         assert meta.get("hooks"), "no hooks in interpvizMeta.json"
         if hook_sets is None:
             hook_sets = {hs.name: hs for hs in (HookSet(REPO_ROOT / meta_folder / f) for f in meta["hooks"])}
-        model = inspector.model
+            sae_probes = {(sn, pn): (part["reads"], part["probe"]) for sn, hs in hook_sets.items() for pn, part in hs.parts.items()}
+        # [[set, part, pos, feature id, value]] from the ui: set these features at these tokens (see synapse/interp/sae_intervene.py)
+        sae_edits = [((sn, pn), pos, fid, value) for sn, pn, pos, fid, value in msg["edits"]]
+        model = sae_model()
         if msg["template"]:
             # the chat template starts with bos itself
             prompt = tokenizer.apply_chat_template([{"role": "user", "content": msg["text"]}], add_generation_prompt=True,
@@ -384,7 +416,7 @@ def handle(msg):
             prompt = [tokenizer.bos_token_id] + tokenizer.encode(msg["text"])
         # (1, T) token ids, grown by greedy generation
         ids = torch.tensor([prompt], device=device)
-        with torch.no_grad():
+        with torch.no_grad(), edited(model, sae_probes, sae_edits):
             for _ in range(msg["n_generate"]):
                 # (1, T, V) -> (1, 1)
                 nxt = model(ids)[:, -1].argmax(-1, keepdim=True)
@@ -392,27 +424,29 @@ def handle(msg):
                 if nxt.item() == tokenizer.eos_token_id:
                     break
 
-        # {read point: (T, d) float32 cpu} filled by forward hooks on the read points' modules
+        # {read point: (T, d) float32 cpu} filled by forward hooks on the read points' modules. the edit hooks go in
+        # first, so the capture hooks (run after them) see the edited activations
         captured = {}
         handles = []  # [RemovableHandle]
-        for point in {part["reads"] for hs in hook_sets.values() for part in hs.parts.values()}:
-            path, side = point.rsplit(":", 1)
-            module = model.get_submodule(path)
-            if side == "out":
-                # decoder layers return (hidden_states, present_kv): the activation is the first element
-                handles.append(module.register_forward_hook(
-                    lambda mod, args, out, point=point: captured.__setitem__(point, (out[0] if isinstance(out, tuple) else out)[0].float().cpu())))
-            else:
-                handles.append(module.register_forward_pre_hook(
-                    lambda mod, args, point=point: captured.__setitem__(point, args[0][0].float().cpu())))
-        try:
-            with torch.no_grad():
+        with torch.no_grad(), edited(model, sae_probes, sae_edits):
+            for point in {part["reads"] for hs in hook_sets.values() for part in hs.parts.values()}:
+                path, side = point.rsplit(":", 1)
+                module = model.get_submodule(path)
+                if side == "out":
+                    # decoder layers return (hidden_states, present_kv): the activation is the first element
+                    handles.append(module.register_forward_hook(
+                        lambda mod, args, out, point=point: captured.__setitem__(point, (out[0] if isinstance(out, tuple) else out)[0].float().cpu())))
+                else:
+                    handles.append(module.register_forward_pre_hook(
+                        lambda mod, args, point=point: captured.__setitem__(point, args[0][0].float().cpu())))
+            try:
                 # (1, T, V)
                 logits = model(ids)
-        finally:
-            for h in handles:
-                h.remove()
+            finally:
+                for h in handles:
+                    h.remove()
 
+        sae_ids = ids
         # (T, V) -> (T, N_NEXT)
         probs, nxt = logits[0].float().softmax(-1).topk(N_NEXT, dim=-1)
         return {
@@ -424,6 +458,29 @@ def handle(msg):
             "next": [[[tokenizer.decode([i]), round(p, 3)] for i, p in zip(ir, pr)] for ir, pr in zip(nxt.tolist(), probs.tolist())],
             "hooks": {name: {"display": hs.display, "parts": hs.encode(captured)} for name, hs in hook_sets.items()},
         }
+
+    elif t == "sae_attribute":
+        # attribution of every hook part's active latents (+ bias and error node per cell) to the prediction of token
+        # column msg["target"] of the last run, with its edits (see synapse/interp/sae_attribute.py)
+        assert sae_ids is not None, "run a prompt first"
+        with edited(sae_model(), sae_probes, sae_edits):
+            r = attribute(sae_model(), sae_ids, sae_probes, msg["target"])
+        parts = {}  # {set: {part: {"ids": [[int]], "attr": [[float]], "err": [float], "bias": [float]}}}, per token strongest activation first, zeros dropped
+        for (sn, pn), p in r["parts"].items():
+            n = hook_sets[sn].display["max_features"]
+            keep = p["vals"][:, :n] > 0
+            parts.setdefault(sn, {})[pn] = {
+                "ids": [row[k].tolist() for row, k in zip(p["idx"][:, :n], keep)],
+                "attr": [[round(a, 4) for a in row[k].tolist()] for row, k in zip(p["attr"][:, :n], keep)],
+                "err": [round(e, 4) for e in p["err"].tolist()],
+                "bias": [round(b, 4) for b in p["bias"].tolist()],
+            }
+        return {"type": t, "target": msg["target"], "logit": round(r["logit"], 3), "parts": parts}
+
+    elif t == "sae_search":
+        # labels of one hook part containing every word of msg["query"], best label score first
+        assert hook_sets is not None, "run a prompt first"
+        return {"type": t, "results": hook_sets[msg["set"]].search(msg["part"], msg["query"], SEARCH_LIMIT)}
 
     elif t == "sae_feature":
         # one latent's card: label, score, density, example windows from its picks

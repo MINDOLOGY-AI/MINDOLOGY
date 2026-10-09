@@ -73,12 +73,13 @@ features = sparse decomposition of activations; by the linear representation hyp
 `synapse/probes/sae/TopKSAE.py`, run `evoke/OlMo2_1b/interp/sae_resid_topk.py`.  
 
 model: `f = topk_k(relu((x·s - b_dec) W_enc + b_enc))`, `x̂ = (f W_dec + b_dec) / s`  
+- limited decoder: `encode` returns the top-k as `vals (N, k)` + `idx (N, k)` (strongest first), never a dense `(N, d_sae)` f; `decode(vals, idx)` sums only those k decoder rows, `F.embedding_bag(idx, W_dec, per_sample_weights=vals, mode="sum")` (a row lookup + weighted sum in one op, no `(N, k, d_in)` intermediate), then `+ b_dec` (full vector) and `/ s`. decoder cost per token 32768×2048 → 64×2048; gradients reach only the used rows. AuxK decodes its dead picks the same way. callers needing dense features (picks) scatter `vals` into zeros  
 - k = 64, d_sae = 16 × 2048 = 32768  
 - `s` = norm_factor, per layer so mean ‖x·s‖ = √2048 (from 4 batches)  
 - decoder rows unit norm (renormed every step)
 - W_enc = W_decᵀ at init  
 - `b_dec` is subtracted before encoding (features encode deviations from it), `b_enc` is a per-feature threshold shift  
-- AuxK (Gao et al.): dead = not fired on any token for 10M tokens (per-feature counter, reset when it fires in a batch). per token, the 512 dead features with the highest pre-activation reconstruct the residual `x - x̂` (detached); `aux_loss = 1/32 · ‖f_aux W_dec - (x - x̂)‖²`. training loss only: `x̂` always uses the 64 TopK winners  
+- AuxK (Gao et al.): dead = not fired on any token for 10M tokens (per-feature counter, reset when it fires in a batch). per token, the 512 dead features with the highest pre-activation reconstruct the residual `x - x̂` (detached); `aux_loss = 1/32 · ‖embedding_bag(aux idx, W_dec, aux vals) - (x - x̂)‖²` (no `b_dec`). training loss only: `x̂` always uses the 64 TopK winners  
 
 training: resid_post, groups of 4 SAEs per LM pass (forward stops after the deepest hooked layer), 1B tokens each from `olmo2_1b_interp_dataset` (128-token chunks shuffled with seed 21: first 1.0B tokens train, remaining ~140M eval, `datasteps/olmo2_1b_interp/tokenize_interp_dataset.py`), 8192 tokens/step (122070 steps), Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32, torch seed 21.  
 
@@ -96,6 +97,14 @@ outputs:
 
 result, 1B-token L8 (`results/OlMo2_1b/sae_resid_topk_1bTok/compare_L8/`, same eval batches as the 100M L8): recon err 18.3% vs 19.4%, CE increase +2.8% vs +3.5%, density within 10× of ideal 73% vs 68%, rare (<ideal/10) 26% vs 31%, never fired on eval 1.6% vs 0.3%.  
 result, 100M-token run (all 16 layers, constant lr, `results/OlMo2_1b/sae_resid_topk/`): recon err 13% (L0), 18–20% (L1–L12), 22–25% (L13–L15); CE increase +3–5% (L0–L11), rising to +19% at L15; ~0 dead. autointerp mean 0.65 (L0) → 0.72 (L2) → 0.75–0.77 (L3–L15), ≥0.7: 38% (L0) → 61–69% (L3–L15); vs MLP neurons 0.54.  
+
+## attribution
+`sae_attribute.py`, `attribute(model, ids, saes, target_pos)`: which SAE features drove one next-token prediction. target = the logit of token `ids[t]` at position `t - 1`. one forward + one backward on the real model (nothing spliced), `g = ∂target/∂x` at every SAE's read point (`torch.autograd.grad`, no weight gradients). per active feature `attr = a_i · (d_i · g)`, `d_i = W_dec[i] / s` (only the k active rows are gathered); per (point, token) a bias node `(b_dec / s) · g` and an error node `(x - x̂) · g`, so features + bias + error = `x · g` exactly. total effect over every downstream path, first order: removing a feature moves the logit by ≈ -attr (checked on L8: same sign for the top 6, sizes within ~3x). positions ≥ t get 0. returns `{"logit", "parts": {name: {"vals", "idx", "attr" (T, k), "bias" (T,), "err" (T,)}}}`. used by interpviz's attribute view; plain python so scripts / LLMs can call it.  
+cost: one backward ≈ 2 forwards. bf16 on a cpu without native bf16 (AVX2 only) is ~300x slower for the backward than fp32 (120 s vs 0.4 s, 20 tokens).  
+
+## intervention
+`sae_intervene.py`, `with edited(model, saes, [(name, pos, feature id, value)]): model(ids)`: sets SAE features to chosen values inside every forward while active (a run, each generation step, an attribution). at the sae's read point, token `pos`: add `(value - current) · W_dec[f] / s`, current = the feature's value among the top-k of that (possibly already edited upstream) activation, 0 if not active. everything else, the SAE's error included, is untouched; the delta is a constant for autograd. a position beyond the current length is skipped until generation reaches it.  
+check (L15 "cold weather" on "The opposite of hot is"): set to its current value → no change; set to 0 → logit(" cold") 12.12 → 8.09 (attribution predicted -3.79) and the top guess becomes " cool"; set to 20 → 18.78, runner-ups " ice", " freezing", " icy". an edited feature re-encodes to about its set value (20 → 18.56: the encoder is not the decoder's exact inverse).  
 
 ## feature groups
 `synapse/interp/grouping.py`, pilot `evoke/OlMo2_1b/interp/group_features.py` (2000 random L8 features with a label and density >= 1e-5, seed 21).  

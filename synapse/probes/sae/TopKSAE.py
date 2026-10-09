@@ -5,9 +5,12 @@
 #                  own top aux_k, scaled by aux_coeff — keeps the dictionary alive.
 # activations are scaled by norm_factor (set by the trainer so the mean L2 norm is sqrt(d_in)); encode/decode
 # take and return activations in the model's own scale.
+# limited decoder: the top-k is kept as (vals, idx) and decoding sums only those k decoder rows (embedding_bag),
+# never a dense (N, d_sae) feature vector.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class TopKSAE(nn.Module):
@@ -37,20 +40,17 @@ class TopKSAE(nn.Module):
         with torch.no_grad():
             self.W_dec.data /= self.W_dec.data.norm(dim=1, keepdim=True).clamp(min=1e-8)
 
-    def _topk(self, pre):
-        # pre: (N, d_sae) relu'd pre-activations -> (N, d_sae) with only each row's k largest kept
-        # (N, k)
-        _, idx = torch.topk(pre, self.k, dim=-1)
-        return torch.zeros_like(pre).scatter(-1, idx, pre.gather(-1, idx))
-
     def encode(self, x):
-        # x: (N, d_in) model-scale activations -> (N, d_sae) features
+        # x: (N, d_in) model-scale activations -> vals (N, k) relu'd top-k pre-activations (strongest first),
+        # idx (N, k) their feature ids
+        # (N, d_in) -> (N, d_sae)
         pre = torch.relu((x * self.norm_factor - self.b_dec) @ self.W_enc + self.b_enc)
-        return self._topk(pre)
+        vals, idx = torch.topk(pre, self.k, dim=-1)
+        return vals, idx
 
-    def decode(self, f):
-        # f: (N, d_sae) -> (N, d_in) model-scale reconstruction
-        return (f @ self.W_dec + self.b_dec) / self.norm_factor
+    def decode(self, vals, idx):
+        # vals, idx: (N, k) -> (N, d_in) model-scale reconstruction from only the k chosen decoder rows
+        return (F.embedding_bag(idx, self.W_dec, per_sample_weights=vals, mode="sum") + self.b_dec) / self.norm_factor
 
     def compute_loss(self, batch_data):
         # batch_data: (N, d_in) model-scale activations
@@ -58,14 +58,16 @@ class TopKSAE(nn.Module):
         x = batch_data * self.norm_factor
         # (N, d_in) -> (N, d_sae)
         pre = torch.relu((x - self.b_dec) @ self.W_enc + self.b_enc)
-        f = self._topk(pre)
-        # (N, d_sae) -> (N, d_in)
-        x_hat = f @ self.W_dec + self.b_dec
+        # (N, k), (N, k)
+        vals, idx = torch.topk(pre, self.k, dim=-1)
+        # (N, k) -> (N, d_in), scaled space
+        x_hat = F.embedding_bag(idx, self.W_dec, per_sample_weights=vals, mode="sum") + self.b_dec
         recon_loss = (x_hat - x).pow(2).sum(-1).mean()
 
         # dead-feature bookkeeping
-        # (d_sae,)
-        fired = (f > 0).any(dim=0)
+        # (d_sae,) features with a positive value on any token of the batch
+        fired = torch.zeros(self.d_sae, dtype=torch.bool, device=x.device)
+        fired[idx[vals > 0]] = True
         with torch.no_grad():
             self.tokens_since_fired += x.shape[0]
             self.tokens_since_fired[fired] = 0
@@ -80,14 +82,15 @@ class TopKSAE(nn.Module):
             residual = (x - x_hat).detach()
             # (N, d_sae) with live features zeroed
             pre_dead = torch.where(dead.unsqueeze(0), pre, torch.zeros_like(pre))
-            # (N, min(aux_k, n_dead))
-            _, idx = torch.topk(pre_dead, min(self.aux_k, n_dead), dim=-1)
-            f_aux = torch.zeros_like(pre).scatter(-1, idx, pre_dead.gather(-1, idx))
-            aux_loss = self.aux_coeff * (f_aux @ self.W_dec - residual).pow(2).sum(-1).mean()
+            # (N, min(aux_k, n_dead)), (N, min(aux_k, n_dead))
+            aux_vals, aux_idx = torch.topk(pre_dead, min(self.aux_k, n_dead), dim=-1)
+            # (N, aux) -> (N, d_in)
+            aux_recon = F.embedding_bag(aux_idx, self.W_dec, per_sample_weights=aux_vals, mode="sum")
+            aux_loss = self.aux_coeff * (aux_recon - residual).pow(2).sum(-1).mean()
 
         metrics = {
             "recon_err_pct": (recon_loss / x.pow(2).sum(-1).mean() * 100).item(),
-            "l0": (f > 0).float().sum(-1).mean().item(),
+            "l0": (vals > 0).float().sum(-1).mean().item(),
             "dead_frac": n_dead / self.d_sae,
             "aux": aux_loss.item(),
         }

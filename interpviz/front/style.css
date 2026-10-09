@@ -22,6 +22,10 @@ body {
     --dim: var(--light-gray);
     --accent: var(--mint);
     --highlight: #ff8c00;   /* clicked node — theme has no orange */
+    /* attribute view: diverging scale, negative - zero - positive */
+    --attr-neg: #4a9eff;
+    --attr-zero: #333333;
+    --attr-pos: #ff9f40;
 }
 
 button {
@@ -477,6 +481,19 @@ header h1 {
     width: 56px;
 }
 
+#sae-attr-info {
+    font-size: 12px;
+    color: var(--dim);
+    white-space: nowrap;
+}
+
+/* attribute view toggle: orange while on */
+#btn-sae-attr.active {
+    background: var(--attr-pos);
+    border-color: var(--attr-pos);
+    color: var(--background);
+}
+
 /* generated text: one line, scrolls horizontally */
 #sae-output {
     flex: 1;
@@ -573,13 +590,62 @@ header h1 {
     color: var(--mint);
 }
 
+/* side panel: top = the cell's latents, bottom = search + the selected latent; each half scrolls */
 #sae-side {
     width: 440px;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     border-left: 1px solid var(--border);
     background: var(--surface);
-    padding: 10px;
     font-family: var(--mono, monospace);
+    font-size: 11px;
+}
+
+#sae-side-top,
+#sae-side-bottom {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+#sae-side-bottom {
+    border-top: 1px solid var(--border);
+}
+
+.sae-search {
+    width: 100%;
+    margin-bottom: 6px;
+    background: var(--background);
+    border: 1px solid var(--border);
+    color: var(--white);
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-family: var(--mono, monospace);
+    font-size: 11px;
+}
+
+.sae-results {
+    margin-bottom: 8px;
+    max-height: 30vh;
+    overflow-y: auto;
+}
+
+.sae-selected {
+    color: var(--lavender);
+    margin: 6px 0 4px;
+}
+
+.sae-set-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 8px;
+    color: var(--dim);
+}
+
+.sae-set-row button {
+    padding: 2px 8px;
     font-size: 11px;
 }
 
@@ -589,11 +655,11 @@ header h1 {
     margin-bottom: 8px;
 }
 
-.sae-latent {
+.sae-latent.pickable {
     cursor: pointer;
 }
 
-.sae-latent:hover {
+.sae-latent.pickable:hover {
     color: var(--accent);
 }
 
@@ -620,4 +686,63 @@ header h1 {
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+/* attribute view: cells holding a top-N node, the target token, columns the target can't see */
+.sae-cell.attr-top {
+    box-shadow: inset 0 0 0 2px var(--white);
+}
+
+.sae-token-row.attr-pickable {
+    cursor: pointer;
+}
+
+.sae-token-row.attr-pickable:hover {
+    color: var(--attr-pos);
+}
+
+.sae-next-row.attr-target {
+    background: color-mix(in srgb, var(--attr-pos) 35%, transparent);
+}
+
+.sae-token-row.attr-target {
+    background: var(--attr-pos);
+    color: var(--background);
+}
+
+/* feature edits: cells with an edit are struck through with purple diagonal stripes; the set box; the edits list */
+.sae-cell.edited {
+    background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--lavender) 60%, transparent) 0 2px, transparent 2px 10px);
+}
+
+.sae-set {
+    width: 70px;
+    background: var(--background);
+    border: 1px solid var(--border);
+    color: var(--lavender);
+    font-family: var(--mono, monospace);
+    font-size: 10px;
+    padding: 1px 3px;
+    border-radius: 2px;
+}
+
+#sae-edits {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.sae-edit-chip {
+    font-size: 11px;
+    font-family: var(--mono, monospace);
+    color: var(--lavender);
+    border: 1px solid var(--lavender);
+    border-radius: 3px;
+    padding: 2px 6px;
+    white-space: nowrap;
+}
+
+.sae-edit-x {
+    cursor: pointer;
+    color: var(--red);
 }

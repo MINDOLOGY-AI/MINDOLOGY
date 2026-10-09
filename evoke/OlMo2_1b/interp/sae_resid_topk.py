@@ -111,14 +111,14 @@ def evaluate_core(lm, saes, layers, eval_ds, n_batches, batch_chunks):
                     b, L, d = resid.shape
                     # (b, L, d) -> (b*L, d)
                     x = resid.reshape(-1, d).float()
-                    # (b*L, d) -> (b*L, d_sae)
-                    f = sae.encode(x)
-                    # (b*L, d_sae) -> (b*L, d)
-                    x_hat = sae.decode(f)
+                    # (b*L, d) -> (b*L, k), (b*L, k)
+                    vals, idx = sae.encode(x)
+                    # (b*L, k) -> (b*L, d)
+                    x_hat = sae.decode(vals, idx)
                     sq[0] += (x_hat - x).pow(2).sum().item()
                     sq[1] += x.pow(2).sum().item()
-                    st["l0"] += (f > 0).float().sum(-1).mean().item() / n_batches
-                    fc += (f > 0).sum(0).double()
+                    st["l0"] += (vals > 0).float().sum(-1).mean().item() / n_batches
+                    fc += torch.bincount(idx[vals > 0], minlength=fc.numel()).double()
                     return (x_hat.to(resid.dtype).view(b, L, d), *output[1:])
                 h = lm.model.layers[layers[name]].register_forward_hook(splice)
                 _, loss, _ = lm(input_ids=ids, labels=labels)

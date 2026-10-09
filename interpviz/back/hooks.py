@@ -13,7 +13,8 @@ from synapse.interp.interp_prompt import window_pieces
 from synapse.probes.sae.TopKSAE import TopKSAE
 
 REPO_ROOT = Path.cwd()
-# {kind: probe class}: built with the hook set's "args", loads a part's weights state_dict, has encode(x) -> latents
+# {kind: probe class}: built with the hook set's "args", loads a part's weights state_dict,
+# has encode(x (N, d_in)) -> vals (N, k), idx (N, k): active latents strongest first
 KINDS = {"topk_sae": TopKSAE}
 
 
@@ -65,16 +66,27 @@ class HookSet:
         out = {}
         for name, part in self.parts.items():
             with torch.no_grad():
-                # (T, d_in) -> (T, d_sae)
-                f = part["probe"].encode(captured[part["reads"]])
+                # (T, d_in) -> (T, k), (T, k)
+                vals, ids = part["probe"].encode(captured[part["reads"]])
             # (T, max_features)
-            vals, ids = f.topk(self.display["max_features"], dim=-1)
+            vals, ids = vals[:, :self.display["max_features"]], ids[:, :self.display["max_features"]]
             ids_t = [[i for i, v in zip(ir, vr) if v > 0] for ir, vr in zip(ids.tolist(), vals.tolist())]
             vals_t = [[round(v, 2) for v in vr if v > 0] for vr in vals.tolist()]
             fired = {i for row in ids_t for i in row}  # {int}
             out[name] = {"reads": part["reads"], "ids": ids_t, "vals": vals_t,
                          "labels": {i: part["labels"][i] for i in fired if i in part["labels"]}}
         return out
+
+    def search(self, part_name, query, limit):
+        # labels of one part that contain every word of query (case-insensitive), best label score first
+        # -> [[unit, label, score, density]] at most limit
+        words = query.lower().split()
+        assert words, "empty search"
+        part = self.parts[part_name]
+        hits = [(u, label, score) for u, (label, score) in part["labels"].items() if all(w in label.lower() for w in words)]
+        # an unparsable test answer left the score None
+        hits.sort(key=lambda h: -(h[2] or 0))
+        return [[u, label, score, float(part["density"][u])] for u, label, score in hits[:limit]]
 
     def feature(self, part_name, unit, token_bytes):
         # one latent's card: label, score, density and up to max_examples pick windows (top-k first, strongest first)
