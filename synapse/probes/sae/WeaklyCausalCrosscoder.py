@@ -116,24 +116,28 @@ class WCCShard(nn.Module):
         # x (N, d_in) scaled residual of layer i -> (N, n_features) pre-activations
         return x @ self.W_enc[str(i)] + self.b_enc[str(i)]
 
+    def scaled(self, x, i):
+        # x (N, n_layers, d_in) model-scale residuals (any dtype) -> (N, d_in) fp32 layer i, scaled by its norm_factor
+        return x[:, i].float() * self.norm_factor[i]
+
     @torch.no_grad()
     def init_b_enc(self, x, total_features):
-        # x (N, n_layers, d_in) scaled residuals: per feature, b_enc so it fires on INIT_FIRING / total_features of tokens
+        # x (N, n_layers, d_in) model-scale residuals: per feature, b_enc so it fires on INIT_FIRING / total_features of tokens
         N = x.shape[0]
         k = N - max(1, round(N * INIT_FIRING / total_features))
         for i in self.layers:
             # (n_features,) the (1 - p) quantile of each feature's pre-activation
-            q = torch.kthvalue(self.pre(x[:, i], i), k, dim=0).values
+            q = torch.kthvalue(self.pre(self.scaled(x, i), i), k, dim=0).values
             self.b_enc[str(i)] += THETA_INIT - q
 
     def decode_partial(self, x):
-        # x (N, n_layers, d_in) scaled residuals -> x_hat (N, n_layers, d_in) this shard's share of the reconstruction,
-        # codes {i: (h (N, F) pre-activations, a (N, F) activations)}
+        # x (N, n_layers, d_in) model-scale residuals (bf16 from the LM) -> x_hat (N, n_layers, d_in) fp32 this shard's
+        # share of the reconstruction in scaled space, codes {i: (h (N, F) pre-activations, a (N, F) activations)}
         N, L, D = x.shape
-        x_hat = self.b_dec.expand(N, L, D).clone() if self.owns_bias else x.new_zeros(N, L, D)
+        x_hat = self.b_dec.expand(N, L, D).clone() if self.owns_bias else torch.zeros(N, L, D, device=x.device)
         codes = {}  # {layer: (h, a)}
         for i in self.layers:
-            h = self.pre(x[:, i], i)
+            h = self.pre(self.scaled(x, i), i)
             a = JumpReLU.apply(h, self.log_threshold[str(i)])
             codes[i] = (h, a)
             # (N, F) -> (N, (L - i) * D) -> (N, L - i, D)
