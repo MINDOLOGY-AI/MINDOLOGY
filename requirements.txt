@@ -6,6 +6,7 @@ transformers
 datasets
 numpy
 safetensors
+bitsandbytes
 matplotlib
 textual
 fastapi

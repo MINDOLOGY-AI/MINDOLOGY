@@ -101,7 +101,7 @@ def load_qwen3_5_model(device=None, dtype=None):
         from evoke.Qwen3_5_4b.run.quantize import quantize_model_int8
         model = quantize_model_int8(model)
 
-    model.to(device)
+    model.to(device=device, dtype=dtype)
     model.eval()
     return model, config
 
