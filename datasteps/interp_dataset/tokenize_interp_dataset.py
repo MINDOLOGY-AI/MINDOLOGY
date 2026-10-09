@@ -1,6 +1,7 @@
 # tokenizes the interp txt shards with the Qwen3.5 tokenizer (doc + <|endoftext|> per doc: qwen has no bos), each
 # source's docs in download order until its TARGETS tokens (the mix), cuts the token stream into 128-token chunks, shuffles
-# the chunks (seed 21) and writes the last EVAL_TOKENS to eval.bin, the rest to train.bin.
+# the chunks (seed 21) and splits them: train.bin (SAE training), test.bin (loss checks during training) and eval.bin (the
+# frozen benchmark every SAE variant is compared on: final metrics, picks, label scores).
 # run from repo root: python -m datasteps.interp_dataset.tokenize_interp_dataset
 
 import json
@@ -12,7 +13,8 @@ from evoke.Qwen3_5_4b.run.loader import load_qwen3_5_tokenizer
 from datasteps.interp_dataset.config import OUTPUT_DIR, TARGETS
 
 CHUNK_SIZE = 128
-EVAL_TOKENS = 50_000_000  # held out for SAE eval; the core eval reads ~400k of them
+TEST_TOKENS = 300_000_000
+EVAL_TOKENS = 200_000_000
 SHUFFLE_SEED = 21
 WRITE_BATCH = 10_000
 
@@ -68,30 +70,23 @@ def main():
     rng = np.random.default_rng(SHUFFLE_SEED)
     perm = rng.permutation(num_chunks)
 
-    assert EVAL_TOKENS % CHUNK_SIZE == 0
+    assert TEST_TOKENS % CHUNK_SIZE == 0 and EVAL_TOKENS % CHUNK_SIZE == 0
+    test_chunks = TEST_TOKENS // CHUNK_SIZE
     eval_chunks = EVAL_TOKENS // CHUNK_SIZE
-    assert eval_chunks < num_chunks, f"{num_chunks * CHUNK_SIZE:,} tokens, need more than {EVAL_TOKENS:,} for eval"
-    split_idx = num_chunks - eval_chunks
-    train_chunks = split_idx
-    print(f"train: {train_chunks:,} chunks | eval: {eval_chunks:,} chunks")
+    train_chunks = num_chunks - test_chunks - eval_chunks
+    assert train_chunks > 0, f"{num_chunks * CHUNK_SIZE:,} tokens, need more than {TEST_TOKENS + EVAL_TOKENS:,} for test + eval"
+    print(f"train: {train_chunks:,} chunks | test: {test_chunks:,} chunks | eval: {eval_chunks:,} chunks")
 
-    print("\n--- writing train.bin ---")
-    train_path = OUT_DIR / "train.bin"
-    with open(train_path, "wb") as f:
-        for i in range(0, split_idx, WRITE_BATCH):
-            batch_idx = perm[i:min(i + WRITE_BATCH, split_idx)]
-            chunks[batch_idx].tofile(f)
-            if (i // WRITE_BATCH) % 10 == 0:
-                print(f"  {min(i + WRITE_BATCH, split_idx):,} / {split_idx:,}")
-
-    print("--- writing eval.bin ---")
-    eval_path = OUT_DIR / "eval.bin"
-    with open(eval_path, "wb") as f:
-        for i in range(0, eval_chunks, WRITE_BATCH):
-            batch_idx = perm[split_idx + i:split_idx + i + WRITE_BATCH]
-            chunks[batch_idx].tofile(f)
-            if (i // WRITE_BATCH) % 10 == 0:
-                print(f"  {min(i + WRITE_BATCH, eval_chunks):,} / {eval_chunks:,}")
+    # {split: (first, end) positions in the shuffled chunk order}
+    splits = {"train": (0, train_chunks), "test": (train_chunks, train_chunks + test_chunks),
+              "eval": (train_chunks + test_chunks, num_chunks)}
+    for split, (first, end) in splits.items():
+        print(f"\n--- writing {split}.bin ---")
+        with open(OUT_DIR / f"{split}.bin", "wb") as f:
+            for i in range(first, end, WRITE_BATCH):
+                chunks[perm[i:min(i + WRITE_BATCH, end)]].tofile(f)
+                if ((i - first) // WRITE_BATCH) % 10 == 0:
+                    print(f"  {min(i + WRITE_BATCH, end) - first:,} / {end - first:,}")
 
     # drop memmap refs so unlink works on windows too
     del chunks, tokens
@@ -99,6 +94,7 @@ def main():
 
     meta = {
         "train_shape": [train_chunks, CHUNK_SIZE],
+        "test_shape": [test_chunks, CHUNK_SIZE],
         "eval_shape": [eval_chunks, CHUNK_SIZE],
         "dtype": "int32",
         "chunk_size": CHUNK_SIZE,

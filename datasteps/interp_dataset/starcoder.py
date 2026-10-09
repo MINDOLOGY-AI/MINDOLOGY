@@ -1,4 +1,5 @@
-# starcoder code by language (gated on hugging face: needs a logged-in token that accepted its terms)
+# starcoder code by language. gated (auto-approve) on hugging face: accept the terms on the dataset page, then the
+# downloading machine needs that account's token in HF_TOKEN
 from datasteps.interp_dataset.utils import stream_to_text
 from datasteps.interp_dataset.config import TARGETS
 

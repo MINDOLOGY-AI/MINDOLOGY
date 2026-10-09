@@ -1,10 +1,11 @@
-# TopK SAEs (k=64, 16x) on Qwen3.5-4B resid_post of the LAYERS, one epoch of the train split each, then core bench per
-# layer, picks for every feature, and labels + detection scores for every feature. every phase resumes from what is
+# TopK SAEs (k=64, 16x) on Qwen3.5-4B resid_post of the LAYERS, one epoch of the train split each (loss checks on the
+# test split), then core bench per layer, picks for every feature, and labels + detection scores for every feature, all
+# on the eval split (the frozen benchmark every SAE variant is compared on). every phase resumes from what is
 # already on disk (training mid-group from its latest checkpoint).
 # run from repo root, two phases:
 #   python -m evoke.Qwen3_5_4b.interp.sae_resid_topk gpu     train + core eval + picks (the gpu box)
 #   python -m evoke.Qwen3_5_4b.interp.sae_resid_topk label   labels + scores + summary (api-bound: any machine with the
-#                                                              repo, the picks and the tokenized train.bin)
+#                                                              repo, the picks and the tokenized eval.bin)
 # outputs: weights/evoke/Qwen3_5_4b/sae_resid_topk/L<i>.pt
 #          results/Qwen3_5_4b/sae_resid_topk/{core.json, density/, picks/, labels/, autointerp.json, summary.md}
 
@@ -53,7 +54,7 @@ def make_sae(expansion):
     return TopKSAE(D_IN, expansion, k=K)
 
 
-def train_group(lm, layers, expansion, train_ds, eval_ds, train_tokens, batch_chunks, chunk_size, weights_dir, results_dir):
+def train_group(lm, layers, expansion, train_ds, test_ds, train_tokens, batch_chunks, chunk_size, weights_dir, results_dir):
     saes = {i: make_sae(expansion) for i in layers}
     trainer = MultiSAETrainer(lm.model.language_model, saes)
     # per layer input scaling so the mean residual norm is sqrt(d_in), estimated on a few batches
@@ -77,7 +78,7 @@ def train_group(lm, layers, expansion, train_ds, eval_ds, train_tokens, batch_ch
     # lr multiplier per step: 1 until decay_start, then linear down to 0 at max_steps
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: min(1.0, (max_steps - step) / (max_steps - decay_start)))
     simple_train(trainer, train_ds, batch_chunks, opt, epochs=1, save_path=str(group_dir), batches_per_log=200,
-                 batches_per_save=2000, eval_dataset=eval_ds, max_steps=max_steps, scheduler=sched, resume=True)
+                 batches_per_save=2000, eval_dataset=test_ds, max_steps=max_steps, scheduler=sched, resume=True)
     trainer.remove_hooks()
     for i in layers:
         torch.save(saes[i].state_dict(), weights_dir / f"L{i}.pt")
@@ -159,6 +160,7 @@ def main(phase, layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train
     results_dir.mkdir(parents=True, exist_ok=True)
     meta = json.loads((BIN_DIR / "meta.json").read_text())
     train_ds = BinUnsupervisedDataset(str(BIN_DIR / "train.bin"), torch.int32, tuple(meta["train_shape"]))
+    test_ds = BinUnsupervisedDataset(str(BIN_DIR / "test.bin"), torch.int32, tuple(meta["test_shape"]))
     eval_ds = BinUnsupervisedDataset(str(BIN_DIR / "eval.bin"), torch.int32, tuple(meta["eval_shape"]))
     if train_tokens is None:
         train_tokens = meta["train_shape"][0] * meta["chunk_size"]
@@ -187,7 +189,7 @@ def main(phase, layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train
                     saes[i].cuda()
             else:
                 print(f"=== training layers {group} ===", flush=True)
-                saes = train_group(lm, group, expansion, train_ds, eval_ds, train_tokens, batch_chunks, meta["chunk_size"], weights_dir, results_dir)
+                saes = train_group(lm, group, expansion, train_ds, test_ds, train_tokens, batch_chunks, meta["chunk_size"], weights_dir, results_dir)
             c, density = evaluate_core(lm, {names[i]: saes[i] for i in group}, {names[i]: i for i in group}, eval_ds, eval_batches, eval_batch_chunks)
             (results_dir / "density").mkdir(exist_ok=True)
             for n, d in density.items():
@@ -209,7 +211,7 @@ def main(phase, layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train
                 sae = make_sae(expansion)
                 sae.load_state_dict(torch.load(weights_dir / f"L{i}.pt"))
                 saes[names[i]] = (i, sae.cuda().eval())
-            gather_picks(HookedQwenSAE(lm, saes), BIN_DIR / "train.bin", tuple(meta["train_shape"]), list(saes), pick_chunks, picks_dir, PICK_BATCH_CHUNKS)
+            gather_picks(HookedQwenSAE(lm, saes), BIN_DIR / "eval.bin", tuple(meta["eval_shape"]), list(saes), pick_chunks, picks_dir, PICK_BATCH_CHUNKS)
         print(f"gpu phase done: weights in {weights_dir}, core.json + density + picks in {results_dir}", flush=True)
         return
 

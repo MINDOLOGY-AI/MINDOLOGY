@@ -81,15 +81,15 @@ model: `f = topk_k(relu((x·s - b_dec) W_enc + b_enc))`, `x̂ = (f W_dec + b_dec
 - `b_dec` is subtracted before encoding (features encode deviations from it), `b_enc` is a per-feature threshold shift  
 - AuxK (Gao et al.): dead = not fired on any token for 10M tokens (per-feature counter, reset when it fires in a batch). per token, the 512 dead features with the highest pre-activation reconstruct the residual `x - x̂` (detached); `aux_loss = 1/32 · ‖embedding_bag(aux idx, W_dec, aux vals) - (x - x̂)‖²` (no `b_dec`). training loss only: `x̂` always uses the 64 TopK winners  
 
-training: resid_post of all 32 layers, groups of 8 SAEs per LM pass (forward stops after the deepest hooked layer; sized for an 80GB H100), one epoch of the train split each (~950M tokens) from `qwen3_5_4b_interp_dataset` (`datasteps/interp_dataset/`: 1B Qwen tokens mixed 35% DCLM web, 20% English Wikipedia, 10% FineWeb-2 Mandarin, 10% StarCoder code, 10% Tulu-3 chats in Qwen's chat format, 5% BookCorpusOpen, 5% OpenWebMath, 5% arXiv; doc + `<|endoftext|>` per doc, 128-token chunks shuffled with seed 21, last 50M tokens eval, the rest train), 8192 tokens/step, Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32, torch seed 21, the model in exact bf16. two phases: `gpu` (train → core eval → picks) and `label` (labels + scores + summary, api-bound, any machine); training resumes mid-group from its latest checkpoint (every 2000 steps; resumed = identical weights to an uninterrupted run), finished groups and phases are skipped.  
+training: resid_post of all 32 layers, groups of 8 SAEs per LM pass (forward stops after the deepest hooked layer; sized for an 80GB H100), one epoch of the train split each (~1.5B tokens) from `qwen3_5_4b_interp_dataset` (`datasteps/interp_dataset/`: 2B Qwen tokens mixed 35% DCLM web, 20% English Wikipedia, 10% FineWeb-2 Mandarin, 10% StarCoder code, 10% Tulu-3 chats in Qwen's chat format, 5% BookCorpusOpen, 5% OpenWebMath, 5% arXiv; doc + `<|endoftext|>` per doc, 128-token chunks shuffled with seed 21, split into train ~1.5B, test 300M (loss checks during training), eval 200M (the frozen benchmark every SAE variant is compared on: core eval, picks, label scores)), 8192 tokens/step, Adam lr 3e-4 constant then linear to 0 over the last 20% of steps, tf32, torch seed 21, the model in exact bf16. two phases: `gpu` (train → core eval → picks) and `label` (labels + scores + summary, api-bound, any machine); training resumes mid-group from its latest checkpoint (every 2000 steps; resumed = identical weights to an uninterrupted run), finished groups and phases are skipped.  
 
 # Sae Eval  
-core eval (200 eval batches of 2048 tokens, 410k tokens), `x` = residual after layer i, `x̂` = SAE reconstruction:  
+core eval on the eval split (200 batches of 2048 tokens, 410k tokens), `x` = residual after layer i, `x̂` = SAE reconstruction:  
 - `recon_err_pct = Σ‖x - x̂‖² / Σ‖x‖² × 100`, sums over all eval tokens. lower = better.  
 - `ce_increase_pct = (CE_sae - CE_clean) / CE_clean × 100`. CE = next-token loss of the whole model; sae = residual after layer i replaced by `x̂`. how much worse the model gets with the SAE spliced in.  
 - density = fraction of eval tokens each feature fires on, histogram in log10 bins  
 
-then picks over 2.05M tokens and labels for every feature (see label).  
+then picks over 2.05M eval-split tokens and labels for every feature (see label).  
 
 outputs:  
 - `weights/evoke/Qwen3_5_4b/sae_resid_topk/L<i>.pt`  

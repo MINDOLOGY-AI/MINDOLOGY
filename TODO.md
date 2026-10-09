@@ -4,14 +4,14 @@ port the openmindfab CLI here. unify a serving function.
 
 - Fix Up Labeling Prompt
 
-Qwen3.5-4B SAEs, full run on a rented H100 80GB (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`, all 32 layers, one epoch ~950M tokens, groups of 8, ~35h):  
-- runpod H100 SXM pod: 150GB volume disk at /workspace (peak use ~85GB) + ~50GB container disk, ssh enabled  
+Qwen3.5-4B SAEs, full run on a rented H100 80GB (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`, all 32 layers, one epoch ~1.5B tokens, groups of 8, ~55h):  
+- runpod H100 SXM pod: 150GB volume disk at /workspace (peak use ~100GB) + ~50GB container disk, ssh enabled  
 - clone the repo, `pip install -r requirements.txt`, `python -m evoke.Qwen3_5_4b.run.download`  
-- upload the laptop's `data/datasteps/txt/interp_dataset` (arxiv needs it: redpajama's script dataset doesn't run on datasets >= 4; starcoder is gated)  
+- accept bigcode/starcoderdata's terms on hugging face, put the account's token in HF_TOKEN on the pod  
 - check `lucadiliello/bookcorpusopen` rows are natural-text books (field `text`) before downloading  
-- `python -m datasteps.interp_dataset.download_all` (tops up dclm + wikipedia, new: fineweb2_cmn, tulu3_sft_chatml, bookcorpusopen), then `python -m datasteps.interp_dataset.tokenize_interp_dataset`  
+- `python -m datasteps.interp_dataset.download_all`, then `python -m datasteps.interp_dataset.tokenize_interp_dataset` (2B tokens: train / test / eval)  
 - `python -m evoke.Qwen3_5_4b.interp.sae_resid_topk gpu` in tmux; first check peak memory + steps/s  
-- copy back weights + results + `train.bin`, then `... sae_resid_topk label` on the laptop (1.31M features, ~$210)  
+- copy back weights + results + `eval.bin`, then `... sae_resid_topk label` on the laptop (1.31M features, ~$210)  
 - next experiment against this baseline: bf16 SAE matmuls (one layer)  
 
 SAE search (`TopKSAE.py`, L8 short runs vs the current recipe on the same eval):  
