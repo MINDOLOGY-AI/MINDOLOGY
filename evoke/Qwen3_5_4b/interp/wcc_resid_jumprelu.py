@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+import bitsandbytes as bnb
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -168,7 +169,9 @@ def main(n_features, lam, train_tokens=None, chunks_per_rank=CHUNKS_PER_RANK, ac
         p.requires_grad = False
     cap = ResidCapture(lm)
 
-    opt = torch.optim.Adam(shard.parameters(), lr=LR, fused=True)
+    # 8-bit adam states (blockwise quantized, bitsandbytes): 2 bytes per param instead of 8, what lets 8192 features per
+    # layer fit next to the LM on a 40GB card
+    opt = bnb.optim.Adam8bit(shard.parameters(), lr=LR)
     decay_start = int(max_steps * (1 - LR_DECAY_FRAC))
     # lr multiplier per step: 1 until decay_start, then linear down to 0 at max_steps
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (max_steps - s) / (max_steps - decay_start)))
