@@ -1,6 +1,6 @@
-# tokenizes the interp txt shards with the Qwen3.5 tokenizer (doc + <|endoftext|> per doc: qwen has no bos), cuts the
-# token stream into 128-token chunks, shuffles the chunks (seed 21) and writes the last EVAL_TOKENS to eval.bin, the rest
-# to train.bin.
+# tokenizes the interp txt shards with the Qwen3.5 tokenizer (doc + <|endoftext|> per doc: qwen has no bos), each
+# source's docs in download order until its TARGETS tokens (the mix), cuts the token stream into 128-token chunks, shuffles
+# the chunks (seed 21) and writes the last EVAL_TOKENS to eval.bin, the rest to train.bin.
 # run from repo root: python -m datasteps.interp_dataset.tokenize_interp_dataset
 
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from evoke.Qwen3_5_4b.run.loader import load_qwen3_5_tokenizer
-from datasteps.interp_dataset.config import OUTPUT_DIR
+from datasteps.interp_dataset.config import OUTPUT_DIR, TARGETS
 
 CHUNK_SIZE = 128
 EVAL_TOKENS = 50_000_000  # held out for SAE eval; the core eval reads ~400k of them
@@ -25,36 +25,36 @@ def main():
     # qwen's document separator in pretraining
     doc_sep = tok.convert_tokens_to_ids("<|endoftext|>")
 
-    datasets = sorted(d for d in TXT_DIR.iterdir() if d.is_dir())
-    print(f"datasets: {len(datasets)}")
-    for d in datasets:
-        shards = sorted(d.glob("shard_*.txt"))
-        print(f"  {d.name}: {len(shards)} shards")
+    for name in TARGETS:
+        shards = sorted((TXT_DIR / name).glob("shard_*.txt"))
+        assert shards, f"no shards for {name} in {TXT_DIR / name}: run python -m datasteps.interp_dataset.download_all"
+        print(f"  {name}: {len(shards)} shards")
 
     tmp_path = OUT_DIR / "tokenized.tmp"
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     total_tokens = 0
+    source_tokens = {}  # {source: tokens written}
 
     print("\n--- tokenizing ---")
     with open(tmp_path, "wb") as f:
-        for ds_dir in datasets:
-            shards_list = sorted(ds_dir.glob("shard_*.txt"))
-            total_shards = len(shards_list)
+        for name, target in TARGETS.items():
             ds_total = 0
-            for shard_idx, shard in enumerate(shards_list, 1):
-                text = shard.read_text()
-                docs = [d.strip() for d in text.split("--DOCSPLIT--") if d.strip()]
-                shard_tokens = 0
-                print(f"  {ds_dir.name}: shard {shard_idx}/{total_shards} — tokenizing {len(docs):,} docs")
-                # one batched call per shard: the fast tokenizer encodes docs in parallel, same ids as tok.encode(doc)
+            for shard in sorted((TXT_DIR / name).glob("shard_*.txt")):
+                docs = [d.strip() for d in shard.read_text().split("--DOCSPLIT--") if d.strip()]
+                # one batched call per shard: the fast tokenizer encodes docs in parallel, same ids as tok.encode(doc).
+                # special-token text (tulu's <|im_start|> / <|im_end|>) encodes to the special token ids
                 for doc_ids in tok(docs)["input_ids"]:
                     ids = doc_ids + [doc_sep]
                     np.array(ids, dtype=np.int32).tofile(f)
-                    shard_tokens += len(ids)
-                ds_total += shard_tokens
-                print(f"    done — {shard_tokens:,} tokens")
+                    ds_total += len(ids)
+                    if ds_total >= target:
+                        break
+                print(f"  {name}: {shard.name} — {ds_total:,} / {target:,} tokens")
+                if ds_total >= target:
+                    break
+            assert ds_total >= target, f"{name}: only {ds_total:,} of {target:,} tokens on disk: download more (DOWNLOAD_MARGIN)"
+            source_tokens[name] = ds_total
             total_tokens += ds_total
-            print(f"  {ds_dir.name}: {ds_total:,} tokens")
 
     print(f"\ntotal tokens: {total_tokens:,}")
 
@@ -105,6 +105,7 @@ def main():
         "total_tokens": num_chunks * CHUNK_SIZE,
         "vocab_size": len(tok),
         "doc_sep_id": doc_sep,
+        "source_tokens": source_tokens,
     }
     (OUT_DIR / "meta.json").write_text(json.dumps(meta, indent=2))
     print(f"\ndone — {OUT_DIR}")

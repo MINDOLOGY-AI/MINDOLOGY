@@ -1,13 +1,16 @@
 import os
-from pathlib import Path
-from datasteps.interp_dataset.config import HF_MIRROR, OUTPUT_DIR
-from datasets import load_dataset
 
-os.environ["HF_ENDPOINT"] = HF_MIRROR
+from datasteps.interp_dataset.config import HF_ENDPOINT, OUTPUT_DIR
+
+# huggingface_hub reads the endpoint when it is first imported (datasets imports it), so set it before
+os.environ["HF_ENDPOINT"] = HF_ENDPOINT
+
+from datasets import load_dataset  # noqa: E402  (must follow the endpoint setting above)
 
 
-# shards live in ram, then writes to disk when shard_docs reached
+# shards live in ram, then are written to disk when either limit is reached (chars: one row can be a whole book)
 SHARD_DOCS = 10_000
+SHARD_CHARS = 50_000_000
 # doc_split is an custom defined things to write in between doc, and used when cutting up bins to not blend different docs into a single context  
 DOC_SPLIT = "--DOCSPLIT--"
 
@@ -52,6 +55,7 @@ def stream_to_text(dataset_name, target_tokens, *, dataset_id, text_field="text"
         ds = ds.skip(existing_docs) 
 
     buf = []  # [str]
+    buf_chars = 0
 
     for row in ds:
         if format_fn is not None:
@@ -62,8 +66,9 @@ def stream_to_text(dataset_name, target_tokens, *, dataset_id, text_field="text"
             continue
         buf.append(text.strip())
         total_chars += len(text)
+        buf_chars += len(text)
 
-        if len(buf) >= SHARD_DOCS:
+        if len(buf) >= SHARD_DOCS or buf_chars >= SHARD_CHARS:
             shard_idx += 1
 
             shard_write_path = out_dir / f"shard_{shard_idx:04d}.txt"
@@ -71,6 +76,7 @@ def stream_to_text(dataset_name, target_tokens, *, dataset_id, text_field="text"
 
             tokens_est = total_chars // 4
             buf = []
+            buf_chars = 0
             print(f"  {dataset_name}: shard {shard_idx:04d} | ~{tokens_est:,} tokens")
             if tokens_est >= target_tokens:
                 print(f"  {dataset_name}: target reached — ~{tokens_est:,} tokens ({shard_idx} shards)")

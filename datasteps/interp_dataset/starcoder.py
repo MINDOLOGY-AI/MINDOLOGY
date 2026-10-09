@@ -1,3 +1,4 @@
+# starcoder code by language (gated on hugging face: needs a logged-in token that accepted its terms)
 from datasteps.interp_dataset.utils import stream_to_text
 from datasteps.interp_dataset.config import TARGETS
 
@@ -13,6 +14,7 @@ for lang, target in LANGS:
     print(f"\n--- starcoder {lang} ---")
     stream_to_text(
         f"starcoder_{lang}",
+        # no DOWNLOAD_MARGIN: code is ~3.2 chars per qwen token, so the chars // 4 estimate already undercounts it
         target,
         dataset_id="bigcode/starcoderdata",
         data_dir=lang,
