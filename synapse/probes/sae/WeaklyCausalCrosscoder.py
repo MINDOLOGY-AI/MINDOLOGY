@@ -149,7 +149,7 @@ class WCCShard(nn.Module):
     def chunks(self, i):
         # row ranges of layer i's decoder, at most CHUNK_ELEMS elements each -> [(r0, r1)]
         rows = CHUNK_ELEMS // self.dec_master[i].shape[1]
-        assert rows >= 1, f"a decoder row ({self.dec_master[i].shape[1]}) is longer than CHUNK_ELEMS
+        assert rows >= 1, f"a decoder row ({self.dec_master[i].shape[1]}) is longer than CHUNK_ELEMS"
         return [(r, min(r + rows, self.n_features)) for r in range(0, self.n_features, rows)]
 
     @torch.no_grad()
