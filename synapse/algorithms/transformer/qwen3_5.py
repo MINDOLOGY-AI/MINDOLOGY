@@ -251,14 +251,19 @@ class Qwen3_5TextModel(nn.Module):
         return hidden_states, past_key_values
 
 
-class Qwen3_5ForCausalLM(nn.Module):
+class Qwen3_5Model(nn.Module):
     # the model.language_model wrapper is kept so the state_dict key layout
     # matches the official HF Qwen3.5 text checkpoint
     def __init__(self, config):
         super().__init__()
+        self.language_model = Qwen3_5TextModel(config)
+
+
+class Qwen3_5ForCausalLM(nn.Module):
+    def __init__(self, config):
+        super().__init__()
         self.config = config
-        self.model = nn.Module()
-        self.model.language_model = Qwen3_5TextModel(config)
+        self.model = Qwen3_5Model(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
