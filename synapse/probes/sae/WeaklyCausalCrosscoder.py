@@ -15,7 +15,8 @@
 # decoder memory: the decoders are ~95% of the parameters, so they are not nn.Parameters. the gpu holds a bf16 working copy
 #             (what every matmul reads) and a bf16 gradient accumulator; the fp32 master weights and their 8-bit adam state
 #             (bitsandbytes blockwise, the same kernel as bnb.optim.Adam8bit) live in pinned cpu memory and are streamed
-#             through the gpu in row chunks once per step for the update, which runs on the gpu. the small parameters
+#             through the gpu in row chunks once per step for the update, which runs on the gpu (copies in and out overlap
+#             the update of the chunk in between). the small parameters
 #             (encoders, thresholds, b_dec) are ordinary nn.Parameters with an ordinary optimizer.
 # decode:     dense bf16 matmul while many features fire; once the batch's mean active count per token drops below
 #             SPARSE_BELOW the forward only touches active rows (embedding_bag). the decoder gradient a^T g and the gradient
@@ -131,6 +132,14 @@ class WCCShard(nn.Module):
             # tokens since each feature last fired (stats only)
             self.register_buffer(f"tokens_since_fired_{i}", torch.zeros(n_features, dtype=torch.long, device=device))
         self.refresh_decoders()
+        # side streams and two gpu buffer sets for the pipelined decoder update (dec_update)
+        self.h2d = torch.cuda.Stream(device)
+        self.d2h = torch.cuda.Stream(device)
+        self.update_bufs = [{"p": torch.empty(CHUNK_ELEMS, device=device),
+                             "s1": torch.empty(CHUNK_ELEMS, dtype=torch.uint8, device=device),
+                             "s2": torch.empty(CHUNK_ELEMS, dtype=torch.uint8, device=device),
+                             "a1": torch.empty(CHUNK_ELEMS // QBLOCK, device=device),
+                             "a2": torch.empty(CHUNK_ELEMS // QBLOCK, device=device)} for _ in range(2)]
         if owns_bias:
             # (n_layers, d_in)
             self.b_dec = nn.Parameter(torch.zeros(n_layers, d_in, device=device))
@@ -138,8 +147,9 @@ class WCCShard(nn.Module):
         self.register_buffer("norm_factor", torch.ones(n_layers, device=device))
 
     def chunks(self, i):
-        # row ranges of layer i's decoder, ~CHUNK_ELEMS elements each -> [(r0, r1)]
-        rows = max(1, CHUNK_ELEMS // self.dec_master[i].shape[1])
+        # row ranges of layer i's decoder, at most CHUNK_ELEMS elements each -> [(r0, r1)]
+        rows = CHUNK_ELEMS // self.dec_master[i].shape[1]
+        assert rows >= 1, f"a decoder row ({self.dec_master[i].shape[1]}) is longer than CHUNK_ELEMS
         return [(r, min(r + rows, self.n_features)) for r in range(0, self.n_features, rows)]
 
     @torch.no_grad()
@@ -219,34 +229,65 @@ class WCCShard(nn.Module):
     def dec_update(self, lr, grad_scale):
         # one 8-bit adam step on every decoder, streamed through the gpu chunk by chunk: master + state in, gradient
         # (dec_G + norm term, times grad_scale for clipping) formed against the fp32 master, bitsandbytes' blockwise update,
-        # master + state out, bf16 copy and row norms refreshed, gradient accumulator zeroed
+        # master + state out, bf16 copy and row norms refreshed, gradient accumulator zeroed. pipelined over 3 streams:
+        # chunk k+1 copies in and chunk k-1 copies out while chunk k updates (two gpu buffer sets, alternating)
         self.dec_step += 1
         dev = self.norm_factor.device
         qmap1, qmap2 = QMAP1.to(dev), QMAP2.to(dev)
-        for i in self.layers:
-            s = self.norm_grad_scale(i)
+        compute = torch.cuda.current_stream(dev)
+        # [(layer, r0, r1)] every chunk of every owned decoder, in update order
+        jobs = [(i, r0, r1) for i in self.layers for r0, r1 in self.chunks(i)]
+        scales = {i: self.norm_grad_scale(i) for i in self.layers}  # {layer: (F,)}
+        loaded = [torch.cuda.Event(), torch.cuda.Event()]  # buffer set filled by the h2d stream
+        freed = [torch.cuda.Event(), torch.cuda.Event()]  # buffer set emptied by the d2h stream
+
+        def host(k):
+            # pinned cpu views of chunk k -> (master (r, M), s1 (n,), s2, absmax1 (n / QBLOCK,), absmax2)
+            i, r0, r1 = jobs[k]
             M = self.dec_master[i].shape[1]
+            e0, e1 = r0 * M, r1 * M
             st = self.dec_adam[i]
-            for r0, r1 in self.chunks(i):
-                e0, e1 = r0 * M, r1 * M
-                p = self.dec_master[i][r0:r1].to(dev, non_blocking=True)
-                s1 = st["s1"][e0:e1].to(dev, non_blocking=True)
-                s2 = st["s2"][e0:e1].to(dev, non_blocking=True)
-                a1 = st["absmax1"][e0 // QBLOCK:e1 // QBLOCK].to(dev, non_blocking=True)
-                a2 = st["absmax2"][e0 // QBLOCK:e1 // QBLOCK].to(dev, non_blocking=True)
-                # (r1 - r0, M) fp32
-                g = (self.dec_G[i][r0:r1].float() + s[r0:r1, None] * p) * grad_scale
-                BF.optimizer_update_8bit_blockwise("adam", g, p, s1, s2, ADAM_BETAS[0], ADAM_BETAS[1], 0.0, 0.0, ADAM_EPS,
-                                                   self.dec_step, lr, qmap1, qmap2, a1, a2, 0.0, gnorm_scale=1.0,
-                                                   skip_zeros=False)
-                self.dec_master[i][r0:r1].copy_(p)
-                st["s1"][e0:e1].copy_(s1)
-                st["s2"][e0:e1].copy_(s2)
-                st["absmax1"][e0 // QBLOCK:e1 // QBLOCK].copy_(a1)
-                st["absmax2"][e0 // QBLOCK:e1 // QBLOCK].copy_(a2)
-                self.dec_W[i][r0:r1] = p.bfloat16()
-                self.dec_norm[i][r0:r1] = p.norm(dim=1)
-                self.dec_G[i][r0:r1].zero_()
+            return (self.dec_master[i][r0:r1], st["s1"][e0:e1], st["s2"][e0:e1],
+                    st["absmax1"][e0 // QBLOCK:e1 // QBLOCK], st["absmax2"][e0 // QBLOCK:e1 // QBLOCK])
+
+        def gpu(k):
+            # gpu buffer views of chunk k, same shapes as host(k)
+            i, r0, r1 = jobs[k]
+            M = self.dec_master[i].shape[1]
+            n = (r1 - r0) * M
+            b = self.update_bufs[k % 2]
+            return b["p"][:n].view(r1 - r0, M), b["s1"][:n], b["s2"][:n], b["a1"][:n // QBLOCK], b["a2"][:n // QBLOCK]
+
+        def load(k):
+            with torch.cuda.stream(self.h2d):
+                self.h2d.wait_event(freed[k % 2])
+                for dst, src in zip(gpu(k), host(k)):
+                    dst.copy_(src, non_blocking=True)
+                loaded[k % 2].record(self.h2d)
+
+        load(0)
+        for k, (i, r0, r1) in enumerate(jobs):
+            if k + 1 < len(jobs):
+                load(k + 1)
+            compute.wait_event(loaded[k % 2])
+            p, s1, s2, a1, a2 = gpu(k)
+            # (r1 - r0, M) fp32
+            g = (self.dec_G[i][r0:r1].float() + scales[i][r0:r1, None] * p) * grad_scale
+            BF.optimizer_update_8bit_blockwise("adam", g, p, s1, s2, ADAM_BETAS[0], ADAM_BETAS[1], 0.0, 0.0, ADAM_EPS,
+                                               self.dec_step, lr, qmap1, qmap2, a1, a2, 0.0, gnorm_scale=1.0,
+                                               skip_zeros=False)
+            self.dec_W[i][r0:r1] = p.bfloat16()
+            self.dec_norm[i][r0:r1] = p.norm(dim=1)
+            self.dec_G[i][r0:r1].zero_()
+            updated = torch.cuda.Event()
+            updated.record(compute)
+            with torch.cuda.stream(self.d2h):
+                self.d2h.wait_event(updated)
+                for dst, src in zip(host(k), (p, s1, s2, a1, a2)):
+                    dst.copy_(src, non_blocking=True)
+                freed[k % 2].record(self.d2h)
+        # the pinned host copies must be complete before anything reads them (next step, checkpoint)
+        torch.cuda.synchronize(dev)
 
     def dec_state(self):
         # everything the decoders need to resume: {"step": int, i: {"master", "s1", "s2", "absmax1", "absmax2"}}
