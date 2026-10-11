@@ -7,7 +7,7 @@ import { renderEdges, clearEdges } from "./edges.js";
 import { initPopup, closeAllPopups } from "./popup.js";
 import { initHighlight } from "./highlight.js";
 import { initGroups, refreshGroupsPanel, hideGroupsPanel } from "./groups.js";
-import { initSae } from "./sae.js";
+import { initSae, setHookSets } from "./sae.js";
 
 // the <board-canvas> element — pan/zoom/grid/edges all live in the component
 const board = document.getElementById("board");
@@ -165,6 +165,7 @@ async function loadMeta() {
     state.meta = result;
     if (result.device) setDeviceUI(result.device);
     setCaptureModeUI(state.meta.capture_mode || "marked");
+    setHookSets(state.meta.hooks || []);
     state.displayNodes = null;
     state.displayEdges = null;
     state.tensorShapes = null;
@@ -233,7 +234,7 @@ initHighlight();
 initGroups(send, state, fullRender);
 initSae();
 
-// tabs: graph (fx board) and sae (token grid) share the header, the server and the loaded model
+// tabs: graph (fx board) and probes (token grid, the "sae" elements) share the header, the server and the loaded model
 document.querySelectorAll("#tabs .tab").forEach(btn => btn.addEventListener("click", () => {
     const tab = btn.dataset.tab;
     document.querySelectorAll("#tabs .tab").forEach(b => b.classList.toggle("active", b === btn));

@@ -1,4 +1,4 @@
-# hooks.py -- hook sets for the sae tab (see interpviz/DOC.md, Hooks)
+# hooks.py -- hook sets for the probes tab (see interpviz/DOC.md, Hooks)
 # a hook set file (models/<name>/hooks/<set>.json) lists parts; each part reads the model's activations at one point,
 # encodes them into sparse latents, and shows them with their labels / density / picks.
 # files under results/ and weights/ are only read, never written.
@@ -11,11 +11,17 @@ import torch
 
 from synapse.interp.interp_prompt import window_pieces
 from synapse.probes.sae.TopKSAE import TopKSAE
+from synapse.probes.sae.WCCEncoder import WCCEncoder
 
 REPO_ROOT = Path.cwd()
-# {kind: probe class}: built with the hook set's "args", loads a part's weights state_dict,
-# has encode(x (N, d_in)) -> vals (N, k), idx (N, k): active latents strongest first
-KINDS = {"topk_sae": TopKSAE}
+# probe kinds, both with encode(x (N, d_in)) -> vals (N, k), idx (N, k): active latents strongest first
+#   topk_sae:     TopKSAE built with the set's "args", loads the part's weights (a state_dict)
+#   wcc_jumprelu: one encoder layer of a weakly causal crosscoder (WCCEncoder), args {"k"}, from the set's "shared"
+#                 file + the part's weights and "layer"
+KINDS = ("topk_sae", "wcc_jumprelu")
+# kinds whose latents can be edited and attributed: their decoder writes back into the point they read
+# (synapse/interp/sae_intervene.py, sae_attribute.py); a crosscoder feature writes into every later layer
+EDITABLE = ("topk_sae",)
 
 
 class HookSet:
@@ -23,6 +29,8 @@ class HookSet:
         cfg = json.loads(path.read_text())
         assert cfg["kind"] in KINDS, f"unknown hook kind {cfg['kind']!r}, known: {list(KINDS)}"
         self.name = path.stem
+        self.kind = cfg["kind"]
+        self.editable = self.kind in EDITABLE
         # {"max_features": int, "on_cell": int, "max_examples": int}
         self.display = cfg["display"]
         # {part name: {"reads": str, "probe": nn.Module, "labels": {unit: [label, score]}, "density": (D,) float64,
@@ -30,8 +38,11 @@ class HookSet:
         self.parts = {}
         for name, p in cfg["parts"].items():
             assert p["reads"].rsplit(":", 1)[1] in ("in", "out"), f"{name}: read point must end in :in or :out"
-            probe = KINDS[cfg["kind"]](**cfg["args"])
-            probe.load_state_dict(torch.load(REPO_ROOT / p["weights"], map_location="cpu", weights_only=True))
+            if self.kind == "topk_sae":
+                probe = TopKSAE(**cfg["args"])
+                probe.load_state_dict(torch.load(REPO_ROOT / p["weights"], map_location="cpu", weights_only=True))
+            else:
+                probe = WCCEncoder(REPO_ROOT / p["weights"], REPO_ROOT / cfg["shared"], p["layer"], **cfg["args"])
             probe.eval()
             labels = {}  # {unit: [label, score]} labeled units only
             for line in open(REPO_ROOT / p["labels"]):
@@ -87,6 +98,15 @@ class HookSet:
         # an unparsable test answer left the score None
         hits.sort(key=lambda h: -(h[2] or 0))
         return [[u, label, score, float(part["density"][u])] for u, label, score in hits[:limit]]
+
+    def out_dir(self, part_name, unit):
+        # latent `unit`'s model-scale write that reaches the logits most directly -> (d_in,) fp32 cpu: an SAE latent's
+        # decoder row (written into its own layer; the later layers are skipped), a crosscoder feature's write into the
+        # last layer
+        probe = self.parts[part_name]["probe"]
+        if self.kind == "topk_sae":
+            return probe.W_dec[unit].detach().float() / probe.norm_factor
+        return probe.out_dir(unit, -1)
 
     def feature(self, part_name, unit, token_bytes):
         # one latent's card: label, score, density and up to max_examples pick windows (top-k first, strongest first)

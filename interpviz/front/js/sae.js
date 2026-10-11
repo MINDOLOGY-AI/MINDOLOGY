@@ -1,4 +1,5 @@
-// sae.js -- the sae tab: type english, run / generate, see every hook part's latents per token
+// sae.js -- the probes tab: pick a hook set (interp method: SAEs, crosscoder, ...), type english, run / generate, see
+// every part of that set's latents per token
 // grid: one column per token (generated tokens continue to the right), rows top -> bottom:
 //   next-token guesses, hook parts in reverse file order (L15 ... L0), the tokens themselves.
 // side panel, top half: the hovered cell's latents (or next-token guesses); click a cell = pin it (hover stops changing
@@ -9,7 +10,8 @@
 // attribution to the target's prediction (blue - / grey 0 / orange +), the target and later columns keep the activation
 // colors; the top TOP_N nodes get a border.
 // edits: every change reruns the same prompt with all edits; the edits list sits in the second bar, edited cells are
-// striped purple.
+// striped purple. attribution and edits only for editable sets (the reply's hooks[set].editable; not crosscoders).
+// latent card: label, score, density, examples, and the tokens its write pushes the next-token logits toward / away from.
 
 // static circular import — safe for function declarations (see nodes.js)
 import { send, showError, status } from "./main.js";
@@ -17,9 +19,11 @@ import { send, showError, status } from "./main.js";
 const grid = document.getElementById("sae-grid");
 const sideTop = document.getElementById("sae-side-top");
 const sideBottom = document.getElementById("sae-side-bottom");
+const setSelect = document.getElementById("sae-set");
 
 // last sae_run reply: {tokens: [str], n_prompt: int, output: str, next: [[[str, prob] x5] per token],
-//   hooks: {set: {display: {max_features, on_cell, max_examples}, parts: {part: {reads, ids: [[int]], vals: [[float]], labels: {id: [label, score]}}}}}}
+//   hooks: {set: {display: {max_features, on_cell, max_examples}, editable: bool,
+//                 parts: {part: {reads, ids: [[int]], vals: [[float]], labels: {id: [label, score]}}}}}} (the one picked set)
 let run = null;
 // the pinned cell element, or null: while set, hovering other cells leaves the side panel alone
 let pinned = null;
@@ -53,6 +57,23 @@ function show(t) {
     return t.replace(/ /g, "␣").replace(/\n/g, "↵");
 }
 
+// fill the hook set dropdown from the meta's hook set files ("hooks/sae_resid_topk.json" -> "sae_resid_topk")
+export function setHookSets(files) {
+    setSelect.innerHTML = "";
+    for (const f of files) {
+        const name = f.split("/").pop().replace(/\.json$/, "");
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        setSelect.appendChild(opt);
+    }
+}
+
+// true if the last run's set can be attributed / edited
+function editable() {
+    return Object.values(run.hooks)[0].editable;
+}
+
 function latentName(part, labels, id) {
     return labels[id] ? labels[id][0] : `${part}:${id} (no label)`;
 }
@@ -66,7 +87,7 @@ async function runSae(nGenerate) {
     status(nGenerate ? `generating ${nGenerate}...` : "running...");
     const prevTarget = attr ? attr.target : null;
     try {
-        run = await send("sae_run", { text, template, n_generate: nGenerate, edits });
+        run = await send("sae_run", { set: setSelect.value, text, template, n_generate: nGenerate, edits });
     } catch (err) {
         showError(err);
         return;
@@ -75,6 +96,13 @@ async function runSae(nGenerate) {
     pinned = null;
     attr = null;
     document.getElementById("sae-output").value = run.output.replace(/\n/g, "↵");
+    // sets that can't be attributed: the attribute view goes off and its button is disabled
+    const attrBtn = document.getElementById("btn-sae-attr");
+    attrBtn.disabled = !editable();
+    if (!editable() && view === "attr") {
+        view = "act";
+        attrBtn.classList.remove("active");
+    }
     renderEdits();
     // attribute view: keep the clicked target if it still exists, else wait for a click
     if (view === "attr" && prevTarget !== null && prevTarget < run.tokens.length) await attribute(prevTarget);
@@ -241,7 +269,7 @@ function renderGrid() {
         cell.title = `token ${t}${t >= run.n_prompt ? " (generated)" : ""}`;
         if (attr && t === attr.target) cell.classList.add("attr-target");
         // the first token has no prediction to explain
-        if (t === 0) return;
+        if (t === 0 || !editable()) return;
         cell.classList.add("attr-pickable");
         cell.addEventListener("click", () => pickTarget(t));
     });
@@ -385,6 +413,14 @@ function renderBottom() {
     head.textContent = `${pn}:${id} at token ${t} "${show(run.tokens[t])}": ${j >= 0 ? part.vals[t][j] : 0}` + (edit ? ` (edited to ${edit[4]})` : "");
     sideBottom.appendChild(head);
 
+    const card = document.createElement("div");
+    card.className = "sae-card";
+    if (!editable()) {
+        sideBottom.appendChild(card);
+        showCard(card, sn, pn, id);
+        return;
+    }
+
     // set box: Enter or "set" adds / replaces the edit and reruns; "remove" drops it
     const row = document.createElement("div");
     row.className = "sae-set-row";
@@ -411,14 +447,12 @@ function renderBottom() {
         row.appendChild(rm);
     }
     sideBottom.appendChild(row);
-
-    const card = document.createElement("div");
-    card.className = "sae-card";
     sideBottom.appendChild(card);
     showCard(card, sn, pn, id);
 }
 
-// latent card: label, score, density, example windows with pieces shaded by activation
+// latent card: label, score, density, example windows with pieces shaded by activation, then (if the server sends
+// them) the tokens the latent's write pushes the next-token logits toward / away from
 async function showCard(card, setName, partName, id) {
     let f;
     try {
@@ -451,6 +485,24 @@ async function showCard(card, setName, partName, id) {
         });
         card.appendChild(line);
     }
+    if (!f.logits) return;
+    for (const [dir, list, color] of [["pushes toward", f.logits.up, "var(--attr-pos)"], ["pushes away from", f.logits.down, "var(--attr-neg)"]]) {
+        const row = document.createElement("div");
+        row.className = "sae-logits";
+        const head = document.createElement("span");
+        head.className = "sae-logits-head";
+        head.style.color = color;
+        head.textContent = dir;
+        row.appendChild(head);
+        for (const [tok, v] of list) {
+            const chip = document.createElement("span");
+            chip.className = "sae-logit";
+            chip.textContent = show(tok);
+            chip.title = String(v);
+            row.appendChild(chip);
+        }
+        card.appendChild(row);
+    }
 }
 
 export function initSae() {
@@ -463,6 +515,14 @@ export function initSae() {
         else grid.scrollLeft += e.deltaX + e.deltaY;
     }, { passive: false });
     document.getElementById("btn-sae-run").addEventListener("click", () => runSae(0));
+    // another hook set: its latents are different, so edits / attribution / the side panel start over; rerun if there was a run
+    setSelect.addEventListener("change", () => {
+        edits = [];
+        attr = null;
+        pinned = null;
+        clearSide();
+        if (lastQuery) runSae(lastQuery.n);
+    });
     // attribute view toggle: on = wait for a clicked target, off = activations only
     const attrBtn = document.getElementById("btn-sae-attr");
     attrBtn.addEventListener("click", () => {

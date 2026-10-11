@@ -1,6 +1,6 @@
 # interpviz
 
-visualize (and perturb) every tensor inside a pytorch model, as a live FX-graph board (graph tab), and what trained hooks (SAEs, later CLTs) read out of it per token (sae tab).
+visualize (and perturb) every tensor inside a pytorch model, as a live FX-graph board (graph tab), and what trained hooks (SAEs, later CLTs) read out of it per token (probes tab).
 run from repo root: `venv/bin/python -m interpviz.app`, open `localhost:8000`. it auto-restarts when a .py under `interpviz/` changes (click load again; frontend changes need only a refresh).
 
 # how it works
@@ -19,7 +19,7 @@ run from repo root: `venv/bin/python -m interpviz.app`, open `localhost:8000`. i
 - renders on `<board-canvas>` (`front/components/BoardCanvas/`, theme `front/components/TechnoParadisalTheme.css`) — infinite-board component (pan/zoom/grid/SVG edge layer). backend sends fully-computed positions + edge points; frontend just draws.
 - node colors: get_attr → sky, output → lavender, group → mint, everything else → white.
 - click a node → inputs highlight pink, outputs highlight purple. double-click a tensor node → popup with shape + values, override & re-run. double-click a group → expand/collapse. double-click rename.
-- header: tabs (graph / sae), meta folder + load, device. second bar: the open tab's controls.
+- header: tabs (graph / probes), meta folder + load, device. second bar: the open tab's controls.
 - groups panel: selection mode (click nodes), create/update/delete groups. rules: interconnected, no cycle with the outside, at least one output node, no overlap with other groups.
 
 ## per-model folder (`models/<name>/`)
@@ -54,8 +54,9 @@ models/foo/
 - `dynamic_dims` (optional): per-arg list of dims to keep dynamic, e.g. `"dynamic_dims": [[1]]` for the seq dim of (batch, seq). without it the trace SPECIALIZES on the example shape and forward rejects any other size with "Guard failed".
 - `custom_modules` = saved groups `{name: [fx_node_names]}`; `expanded_groups` = which are open; `names` = renames; `tensors` = per-node display config (`{"display": "topk", "k": 5, "features": "labels.json"}`).
 - `marked` = fx node names whose VALUES are captured at forward; `capture_mode` = `"marked"` (default) or `"all"`. in marked mode every node still runs and shows its shape — unmarked tensors are discarded as they execute, so huge models don't OOM. toggle in the ui: star on any board node/group box, show marked / show all button. the groups and marks panels share a corner, opening one closes the other.
-- `model.tokenizer` (optional): `"module.path.function"` returning the tokenizer, e.g. `"evoke.Qwen3_5_4b.run.loader.load_qwen3_5_tokenizer"`. needed by the sae tab.
-- `hooks` (optional): hook set files for the sae tab, relative to the model folder, e.g. `["hooks/sae_resid_topk.json"]`.
+- `model.tokenizer` (optional): `"module.path.function"` returning the tokenizer, e.g. `"evoke.Qwen3_5_4b.run.loader.load_qwen3_5_tokenizer"`. needed by the probes tab.
+- `hooks` (optional): hook set files for the probes tab, relative to the model folder, e.g. `["hooks/sae_resid_topk.json", "hooks/wcc_resid_jumprelu.json"]`; the tab's dropdown picks one.
+- `model.logit_lens` (optional): `{"norm": "<final norm module path>", "unembed": "<unembedding module path>", "centered": bool}` (`centered`: the norm scales by `1 + weight`, qwen3.5). with it, latent cards show the tokens the latent's write pushes the logits toward / away from.
 - `weights_path`: if set, server does `torch.load` + `load_state_dict`. if your constructor loads its own weights (like qwen), leave null.
 
 # how to use it on a NEW model
@@ -70,7 +71,7 @@ models/foo/
 # the two bundled models
 
 - `models/xor` — 2-8-1 MLP, trained weights included. the smoke-test model; good for learning the ui.
-- `models/qwen3_5_4b` — Qwen3.5-4B text (evoke's synapse reimplementation, local safetensors, always bf16 on cpu so the trace is device-independent; the server moves it to the gpu). 32 layers: 8 x [3 gated deltanet + 1 full attention]. traced at a fixed 8 tokens (the graph tab's forward takes exactly 8 token ids; the sae tab any text): 25018 visible ops, 32 generated layer groups (1005 ops per deltanet layer, 108 per full-attention layer), default view 66 boxes. `gen_groups.py` regenerates the layer groups from the meta's example input (rerun when torch or the model code changes node names); `tests/qwen_smoke.py` verifies the whole path.
+- `models/qwen3_5_4b` — Qwen3.5-4B text (evoke's synapse reimplementation, local safetensors, always bf16 on cpu so the trace is device-independent; the server moves it to the gpu). 32 layers: 8 x [3 gated deltanet + 1 full attention]. traced at a fixed 8 tokens (the graph tab's forward takes exactly 8 token ids; the probes tab any text): 25018 visible ops, 32 generated layer groups (1005 ops per deltanet layer, 108 per full-attention layer), default view 66 boxes. `gen_groups.py` regenerates the layer groups from the meta's example input (rerun when torch or the model code changes node names); `tests/qwen_smoke.py` verifies the whole path.
 
 # Hooks
 
@@ -102,11 +103,12 @@ a hook = a trained probe on the model: **reads** activations at a point, encodes
   }
 }
 ```
-- `kind` → probe class (`hooks.py` `KINDS`), built with `args`, loads `weights` (a state_dict), has `encode(x) -> (N, n_latents)`.
+- `kind` (`hooks.py` `KINDS`): `topk_sae` = `TopKSAE` built with `args`, loads `weights` (a state_dict); `wcc_jumprelu` = one crosscoder encoder layer (`synapse/probes/sae/WCCEncoder.py`), `args` = `{"k"}`, plus a set-level `"shared"` (the crosscoder's `shared.pt`) and a per-part `"layer"`, no `writes`. both have `encode(x) -> (vals, idx)`, active latents strongest first.
 - `display.max_features` = latents per token sent to the ui (hover / side list); `on_cell` = labels written in each grid cell; `max_examples` = example windows per latent card.
 - `parts` = the probes of the set; latent ids are `part:unit`, e.g. `L8:123`. `labels` = the label pipeline's jsonl, `density` = `(D,) float64`, `picks` = prefix of the picks files (`L8.windows.bin`, ...; their `meta.json` sits next to them and names the token dataset).
 
-## sae tab
+## probes tab
+- the **method** dropdown (left of the text box) picks one hook set (`sae_resid_topk`, `wcc_resid_jumprelu`, ...): only that set is loaded (on its first run, replacing the previous one) and shown; switching clears edits / attribution and reruns the prompt. attribution and edits only for sets whose latents write back into the point they read (`topk_sae`); for a crosscoder the attribute button is disabled and cards have no set box.
 - type english → tokens (with a `bos` first if the model has one; qwen has none) or the model's chat template → optional greedy generation of n tokens (stops at any special token) → one forward with torch forward hooks on every read point → every part encodes its point.
 - grid: one column per token (generated ones in lavender, continuing right), rows top → bottom: next-token guess per position, parts in reverse file order (L15 ... L0), tokens. a cell shows its top `on_cell` latent labels, shaded by the strongest value vs the row's max. side panel, top half: the hovered cell's latents with their values (or the top 5 next-token guesses); click pins the cell (hover stops changing the panel, click again to unpin). bottom half: a label search over the cell's layer (every typed word must appear, best label score first, 50 max) and the selected latent (click one in either half): its value at the cell's token, a **set** box, and its card (label, score, density, `max_examples` pick windows, pieces shaded by activation).
 - mouse wheel scrolls the grid sideways, shift + wheel up/down.
@@ -114,12 +116,16 @@ a hook = a trained probe on the model: **reads** activations at a point, encodes
 - **attribute** button (orange while on) = attribution view (`synapse/interp/sae_attribute.py`): cells colored by attribution to the prediction of one target token, blue (pushes against) ← grey (0) → orange (pushes toward), scaled by the grid's strongest |attribution|; a cell shows its top-|attr| node: a latent, its bias node (the SAE's constant `b_dec`) or its error node (what the SAE leaves unexplained, `x - x̂`). nothing is attributed until you pick the target: click a token in the bottom row (not the first; also turns the view on) or a next-word guess in the top row (target = the token it predicted); columns from the target on can't affect it and keep the activation colors. the top 20 nodes of the attributed columns by |attr| (latents, bias and error nodes) get a white border on their cell and a ★ in the side panel. the target survives reruns (edits) while it exists.
 - second bar: the generated text in a one-line horizontally scrolling box next to generate.
 - hook sets load on the first run (the SAEs are GBs; the graph tab never needs them), on cpu in fp32; activations are moved to cpu for encoding.
-- the sae tab's model follows the device: on gpu the loaded bf16 model; on cpu an fp32 copy (+16 GB ram for qwen 4b, made on the first sae request, dropped on a device change), because cpus without native bf16 emulate it (attribution 0.8 s instead of ~1-2 min). the graph tab always uses the bf16 model, so its trace and groups don't change.
-- messages: `sae_run {text, template, n_generate, edits: [[set, part, token, latent id, value]]}` → `{tokens: [str], n_prompt, output: str (generated text), next: [[[str, prob] x5] per token], hooks: {set: {display, parts: {part: {reads, ids: [[int]], vals: [[float]], labels: {id: [label, score]}}}}}}` (per token strongest first, zeros dropped, labels only for latents that fired); `sae_attribute {target}` → `{target, logit, parts: {set: {part: {ids: [[int]], attr: [[float]], bias: [float], err: [float]}}}}` (ids per token as in `sae_run`), for the last run's tokens and edits; `sae_search {set, part, query}` → `{results: [[id, label, score, density]]}`; `sae_feature {set, part, unit}` → `{label, score, density, examples: [{pieces: [str], acts: [float]}]}` (a piece = tokens merged to whole characters, act = its max).
+- the probes tab's model follows the device: on gpu the loaded bf16 model; on cpu an fp32 copy (+16 GB ram for qwen 4b, made on the first sae request, dropped on a device change), because cpus without native bf16 emulate it (attribution 0.8 s instead of ~1-2 min). the graph tab always uses the bf16 model, so its trace and groups don't change.
+- messages: `sae_run {text, template, n_generate, edits: [[set, part, token, latent id, value]]}` → `{tokens: [str], n_prompt, output: str (generated text), next: [[[str, prob] x5] per token], hooks: {set: {display, parts: {part: {reads, ids: [[int]], vals: [[float]], labels: {id: [label, score]}}}}}}` (per token strongest first, zeros dropped, labels only for latents that fired). `sae_run` also takes `set` (the dropdown's hook set) and its reply's `hooks` holds only that set, plus `editable: bool`; `sae_attribute {target}` → `{target, logit, parts: {set: {part: {ids: [[int]], attr: [[float]], bias: [float], err: [float]}}}}` (ids per token as in `sae_run`), for the last run's tokens and edits; `sae_search {set, part, query}` → `{results: [[id, label, score, density]]}`; `sae_feature {set, part, unit}` → `{label, score, density, examples: [{pieces: [str], acts: [float]}], logits: {up: [[str, float]], down: [[str, float]]}}` (a piece = tokens merged to whole characters, act = its max; `logits` only with `model.logit_lens`: the 10 tokens most pushed toward / away from = unembedding · (final norm gain ⊙ the latent's write), the norm's per-token 1/rms left out, so it ranks tokens; the write is an SAE latent's decoder row (into its own layer, the later layers skipped) or a crosscoder feature's write into the last layer).
 
 # SAEs
 
 `models/qwen3_5_4b/hooks/sae_resid_topk.json`: the TopK SAEs of `synapse/interp/DOC.md` (`evoke/Qwen3_5_4b/interp/sae_resid_topk.py`), one part per layer `L0`..`L31`, each reading and writing `model.language_model.layers.i:out` (resid_post, the training hook). `encode` = `topk_64(relu((x·s - b_dec) W_enc + b_enc))`, so every token has ≤ 64 active latents and `max_features` = 64 shows all of them. labels, density and picks come from `results/Qwen3_5_4b/sae_resid_topk/`.
+
+# crosscoder
+
+`models/qwen3_5_4b/hooks/wcc_resid_jumprelu.json`: the weakly causal crosscoder of `synapse/interp/DOC.md` (`evoke/Qwen3_5_4b/interp/wcc_resid_jumprelu.py`), one part per encoder layer `L0`..`L31`, each reading `model.language_model.layers.i:out`. `encode` = the JumpReLU activations `a = h · 1[h > θ]`, `h = (x·s_i) W_enc + b_enc`, top `k` = 64 per token (a layer's L0 is ~2-20). the decoder (~110 GB fp32 over all layers) stays memory-mapped in `L<i>.pt`; only the cards read rows of it (the last-layer write). weights from `weights/evoke/Qwen3_5_4b/wcc_resid_jumprelu/`, labels, density and picks from `results/Qwen3_5_4b/wcc_resid_jumprelu/`.
 
 # tests
 

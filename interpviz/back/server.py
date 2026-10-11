@@ -60,13 +60,17 @@ device = DEVICE
 # sae tab: the model's tokenizer (from meta model.tokenizer) and its raw utf-8 bytes per token id
 tokenizer = None
 token_bytes: list[bytes] | None = None
-# {set name: HookSet} loaded on the first sae request (SAE weights are GBs; the graph tab never needs them)
-hook_sets: dict | None = None
+# the probes tab's one loaded HookSet: the set picked in its dropdown, loaded on its first request (probe weights are
+# GBs; the graph tab never needs them), replaced when another set is picked
+hook_set: HookSet | None = None
 # top next-token guesses shown per position
 N_NEXT = 5
+# tokens a latent card lists as most pushed toward / away from
+N_LOGITS = 10
 # most results a label search returns
 SEARCH_LIMIT = 50
-# {(set, part): (read point, probe)} every loaded hook part, the saes argument of attribute / edited
+# {(set, part): (read point, probe)} every part of the loaded set if it is editable (else {}), the saes argument of
+# attribute / edited
 sae_probes = None
 # (1, T) token ids of the last sae_run (prompt + generated), what sae_attribute explains
 sae_ids = None
@@ -203,7 +207,7 @@ def _build_display():
 
 
 def handle(msg):
-    global inspector, meta, meta_folder, raw_graph, device, tokenizer, token_bytes, hook_sets, sae_probes, sae_ids, sae_edits, cpu_fp32_model
+    global inspector, meta, meta_folder, raw_graph, device, tokenizer, token_bytes, hook_set, sae_probes, sae_ids, sae_edits, cpu_fp32_model
     t = msg["type"]
 
     if t == "load_meta":
@@ -211,7 +215,7 @@ def handle(msg):
         raw_graph = None
         tokenizer = None
         token_bytes = None
-        hook_sets = None
+        hook_set = None
         sae_probes = None
         sae_ids = None
         cpu_fp32_model = None
@@ -398,13 +402,18 @@ def handle(msg):
 
     elif t == "sae_run":
         # text -> tokens (+ n greedy generated tokens) -> one forward capturing every hook's read point
-        # -> tokens, next-token guesses per position, and every hook part's latents per token
+        # -> tokens, next-token guesses per position, and every part of hook set msg["set"]: its latents per token
         assert inspector and tokenizer, "load a model with a tokenizer first"
-        # hook set files, relative to the meta folder
-        assert meta.get("hooks"), "no hooks in interpvizMeta.json"
-        if hook_sets is None:
-            hook_sets = {hs.name: hs for hs in (HookSet(REPO_ROOT / meta_folder / f) for f in meta["hooks"])}
-            sae_probes = {(sn, pn): (part["reads"], part["probe"]) for sn, hs in hook_sets.items() for pn, part in hs.parts.items()}
+        # {set name: hook set file relative to the meta folder}
+        files = {Path(f).stem: f for f in meta.get("hooks", [])}
+        assert msg["set"] in files, f"no hook set {msg['set']!r} in interpvizMeta.json hooks, have {list(files)}"
+        if hook_set is None or hook_set.name != msg["set"]:
+            # drop the old set's GBs before loading the next
+            hook_set = None
+            sae_probes = None
+            hook_set = HookSet(REPO_ROOT / meta_folder / files[msg["set"]])
+            sae_probes = {(hook_set.name, pn): (part["reads"], part["probe"]) for pn, part in hook_set.parts.items()} if hook_set.editable else {}
+        assert hook_set.editable or not msg["edits"], f"{hook_set.name} ({hook_set.kind}) latents can't be edited"
         # [[set, part, pos, feature id, value]] from the ui: set these features at these tokens (see synapse/interp/sae_intervene.py)
         sae_edits = [((sn, pn), pos, fid, value) for sn, pn, pos, fid, value in msg["edits"]]
         model = sae_model()
@@ -432,7 +441,7 @@ def handle(msg):
         captured = {}
         handles = []  # [RemovableHandle]
         with torch.no_grad(), edited(model, sae_probes, sae_edits):
-            for point in {part["reads"] for hs in hook_sets.values() for part in hs.parts.values()}:
+            for point in {part["reads"] for part in hook_set.parts.values()}:
                 path, side = point.rsplit(":", 1)
                 module = model.get_submodule(path)
                 if side == "out":
@@ -459,18 +468,19 @@ def handle(msg):
             # the generated continuation as text
             "output": tokenizer.decode(ids[0, len(prompt):].tolist()),
             "next": [[[tokenizer.decode([i]), round(p, 3)] for i, p in zip(ir, pr)] for ir, pr in zip(nxt.tolist(), probs.tolist())],
-            "hooks": {name: {"display": hs.display, "parts": hs.encode(captured)} for name, hs in hook_sets.items()},
+            "hooks": {hook_set.name: {"display": hook_set.display, "editable": hook_set.editable, "parts": hook_set.encode(captured)}},
         }
 
     elif t == "sae_attribute":
         # attribution of every hook part's active latents (+ bias and error node per cell) to the prediction of token
         # column msg["target"] of the last run, with its edits (see synapse/interp/sae_attribute.py)
         assert sae_ids is not None, "run a prompt first"
+        assert hook_set.editable, f"{hook_set.name} ({hook_set.kind}) latents can't be attributed"
         with edited(sae_model(), sae_probes, sae_edits):
             r = attribute(sae_model(), sae_ids, sae_probes, msg["target"])
         parts = {}  # {set: {part: {"ids": [[int]], "attr": [[float]], "err": [float], "bias": [float]}}}, per token strongest activation first, zeros dropped
         for (sn, pn), p in r["parts"].items():
-            n = hook_sets[sn].display["max_features"]
+            n = hook_set.display["max_features"]
             keep = p["vals"][:, :n] > 0
             parts.setdefault(sn, {})[pn] = {
                 "ids": [row[k].tolist() for row, k in zip(p["idx"][:, :n], keep)],
@@ -482,14 +492,27 @@ def handle(msg):
 
     elif t == "sae_search":
         # labels of one hook part containing every word of msg["query"], best label score first
-        assert hook_sets is not None, "run a prompt first"
-        return {"type": t, "results": hook_sets[msg["set"]].search(msg["part"], msg["query"], SEARCH_LIMIT)}
+        assert hook_set is not None and hook_set.name == msg["set"], "run a prompt with this hook set first"
+        return {"type": t, "results": hook_set.search(msg["part"], msg["query"], SEARCH_LIMIT)}
 
     elif t == "sae_feature":
-        # one latent's card: label, score, density, example windows from its picks
-        assert hook_sets is not None, "run a prompt first"
-        hs = hook_sets[msg["set"]]
-        return {"type": t, **hs.feature(msg["part"], msg["unit"], token_bytes)}
+        # one latent's card: label, score, density, example windows from its picks, and (if the meta names the model's
+        # final norm and unembedding in model.logit_lens) the tokens its write pushes the next-token logits toward / away from
+        assert hook_set is not None and hook_set.name == msg["set"], "run a prompt with this hook set first"
+        card = hook_set.feature(msg["part"], msg["unit"], token_bytes)
+        lens = meta["model"].get("logit_lens")
+        if lens:
+            m = sae_model()
+            norm, head = m.get_submodule(lens["norm"]), m.get_submodule(lens["unembed"])
+            # (d_in,) the latent's write times the final norm's per-dim gain (lens["centered"]: the norm scales by 1 + weight,
+            # qwen3.5). the norm's per-token 1 / rms is left out, so the numbers rank tokens, they are not exact logit changes
+            v = hook_set.out_dir(msg["part"], msg["unit"]) * (norm.weight.float().cpu() + (1 if lens["centered"] else 0))
+            # (V, d_in) @ (d_in,) -> (V,)
+            eff = (head.weight @ v.to(head.weight)).float().cpu()
+            up, down = eff.topk(N_LOGITS), (-eff).topk(N_LOGITS)
+            card["logits"] = {"up": [[tokenizer.decode([i]), round(x, 3)] for x, i in zip(up.values.tolist(), up.indices.tolist())],
+                              "down": [[tokenizer.decode([i]), round(-x, 3)] for x, i in zip(down.values.tolist(), down.indices.tolist())]}
+        return {"type": t, **card}
 
     elif t == "update_display":
         assert meta and meta_folder

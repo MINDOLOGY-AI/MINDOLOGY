@@ -21,7 +21,12 @@
         "input_dtypes": [
             "long"
         ],
-        "tokenizer": "evoke.Qwen3_5_4b.run.loader.load_qwen3_5_tokenizer"
+        "tokenizer": "evoke.Qwen3_5_4b.run.loader.load_qwen3_5_tokenizer",
+        "logit_lens": {
+            "norm": "model.language_model.norm",
+            "unembed": "lm_head",
+            "centered": true
+        }
     },
     "expanded_groups": [],
     "custom_modules": {
@@ -25083,6 +25088,7 @@
     ],
     "capture_mode": "marked",
     "hooks": [
-        "hooks/sae_resid_topk.json"
+        "hooks/sae_resid_topk.json",
+        "hooks/wcc_resid_jumprelu.json"
     ]
 }
