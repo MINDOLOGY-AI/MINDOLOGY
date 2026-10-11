@@ -312,10 +312,6 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
             torch.save({"b_dec": shard.b_dec.data, "norm_factor": shard.norm_factor, "n_features": n_features, "lam": lam},
                        weights_dir / "shared.pt")
         dist.barrier()
-        for f in ckpt_dir.glob(f"rank{rank}_step*.pt"):
-            f.unlink()
-        if rank == 0:
-            step_file.unlink(missing_ok=True)
     else:
         # rerun after training: load this rank's layers back for the eval
         sd = torch.load(weights_dir / "shared.pt", map_location=dev)
