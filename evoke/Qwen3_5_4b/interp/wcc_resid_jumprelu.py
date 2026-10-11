@@ -38,7 +38,8 @@ GRAD_CLIP = 1.0  # global grad norm over every rank's parameters
 LOG_EVERY = 200
 TEST_EVERY = 5000
 TEST_BATCHES = 20
-SAVE_EVERY = 1000  # ~2-3 min per save (8 x 22GB), only the latest is kept
+SAVE_EVERY = 1000  # ~2-3 min per save (8 x 22GB)
+KEEP_CKPTS = 3  # newest checkpoints kept per rank (~177GB each over all ranks)
 EVAL_BATCHES = 800  # global, split over ranks
 EVAL_CHUNKS = 4  # x 128 = 512 tokens per rank per eval batch: 800 x 512 = 410k eval tokens, same as sae_resid_topk
 SEED = 21
@@ -294,9 +295,10 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
                     (results_dir / "losses.json").write_text(json.dumps(losses))
                     step_file.write_text(str(s + 1))
                 dist.barrier()
-                for old in ckpt_dir.glob(f"rank{rank}_step*.pt"):
-                    if old.name != f"rank{rank}_step{s + 1}.pt":
-                        old.unlink()
+                # this rank's checkpoints, oldest first: all but the newest KEEP_CKPTS go
+                mine = sorted(ckpt_dir.glob(f"rank{rank}_step*.pt"), key=lambda f: int(f.stem.split("_step")[1]))
+                for old in mine[:-KEEP_CKPTS]:
+                    old.unlink()
 
         # --- final weights: L<i>.pt per encoder layer, shared.pt with b_dec and norm_factor ---
         for i in shard.layers:
