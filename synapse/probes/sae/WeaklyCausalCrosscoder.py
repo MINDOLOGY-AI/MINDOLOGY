@@ -34,7 +34,10 @@ SEED = 21
 THETA_INIT = 0.03  # CLT paper: initial JumpReLU threshold
 BANDWIDTH = 1.0  # CLT paper: straight-through bandwidth eps
 C = 4.0  # tanh sharpness
-LAM_P = 3e-6  # pre-activation loss coefficient
+# pre-activation loss coefficient. Anthropic: 3e-6; at our tanh lambda (~30-45) that only holds features above ~1e-8
+# density against the sparsity push, so 41% of features died by step 10k. 3e-4 (100x) puts the floor near ~2e-6
+# (dead = no fire in 10M tokens = 1e-7), costing ~1-2 active features per token over all 655k
+LAM_P = 3e-4
 # mean active features per token (one encoder layer) under which the decode forward switches to the active rows only
 SPARSE_BELOW = 16
 # share of all features (every layer) firing per token right after init: b_enc is set so each fires 10000 / total features
