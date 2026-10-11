@@ -39,7 +39,7 @@ GRAD_CLIP = 1.0  # global grad norm over every rank's parameters
 LOG_EVERY = 200
 TEST_EVERY = 5000
 TEST_BATCHES = 20
-SAVE_EVERY = 5000
+SAVE_EVERY = 1000  # ~2-3 min per save (8 x 22GB), only the latest is kept
 EVAL_BATCHES = 800  # global, split over ranks
 EVAL_CHUNKS = 4  # x 128 = 512 tokens per rank per eval batch: 800 x 512 = 410k eval tokens, same as sae_resid_topk
 SEED = 21
