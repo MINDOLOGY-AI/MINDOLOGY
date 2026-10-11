@@ -2,9 +2,10 @@
 # train split (loss checks on the test split), then a core eval on the eval split comparable to sae_resid_topk's core.json.
 # multi-gpu: every rank runs the LM on its own chunks, the residuals of all ranks are all-gathered, each rank owns the
 # features of a few encoder layers (balanced by decoder size), and the partial reconstructions are all-reduced.
-# resumes from the latest checkpoint.
+# resumes from the latest checkpoint. dead features are resampled every RESAMPLE_EVERY steps (and on resume with the
+# `resample` flag).
 # run from repo root on an 8-gpu box:
-#   venv/bin/torchrun --nproc_per_node 8 -m evoke.Qwen3_5_4b.interp.wcc_resid_jumprelu <features per layer> <final lambda>
+#   venv/bin/torchrun --nproc_per_node 8 -m evoke.Qwen3_5_4b.interp.wcc_resid_jumprelu <features per layer> <final lambda> [resample]
 # outputs: weights/evoke/Qwen3_5_4b/wcc_resid_jumprelu/{L<i>.pt (encoder layer i's features), shared.pt (b_dec, norm_factor)}
 #          results/Qwen3_5_4b/wcc_resid_jumprelu/{core.json, density/, losses.json}
 
@@ -20,7 +21,7 @@ import torch
 import torch.distributed as dist
 
 from evoke.Qwen3_5_4b.run.loader import load_qwen3_5_model
-from synapse.probes.sae.WeaklyCausalCrosscoder import WCCShard
+from synapse.probes.sae.WeaklyCausalCrosscoder import DEAD_TOKENS, QZERO1, QZERO2, THETA_INIT, WCCShard
 
 BIN_DIR = Path.cwd() / "data" / "datasteps" / "tokenized" / "qwen3_5_4b_interp_dataset"
 WEIGHTS_DIR = Path.cwd() / "weights" / "evoke" / "Qwen3_5_4b" / "wcc_resid_jumprelu"
@@ -42,6 +43,9 @@ SAVE_EVERY = 5000
 EVAL_BATCHES = 800  # global, split over ranks
 EVAL_CHUNKS = 4  # x 128 = 512 tokens per rank per eval batch: 800 x 512 = 410k eval tokens, same as sae_resid_topk
 SEED = 21
+RESAMPLE_EVERY = 25_000  # steps between dead-feature resamplings (Anthropic 2023 resampled at 25k, 50k, 75k, 100k)
+RESAMPLE_ENC_SCALE = 0.2  # resampled encoder column norm = this x the layer's mean alive encoder column norm (Anthropic 2023)
+RESAMPLE_FIRING = 4e-4  # share of the resampling tokens a resampled feature fires on at first
 
 
 def assign_layers(n_layers, world):
@@ -128,10 +132,71 @@ def layer_vec(vals, dev):
     return v
 
 
+@torch.no_grad()
+def resample(shard, opt, resid, n_micro):
+    # Anthropic's neuron resampling ("Towards Monosemanticity" 2023) for the JumpReLU wcc. resid (accum * n_micro, L, D)
+    # this rank's bf16 residuals of train tokens no training step reads, n_micro tokens per rank per micro-batch.
+    # every dead feature of encoder layer i gets its own token t (no replacement), drawn ~ the squared error it could fix
+    # (sum over its targets j >= i of ||x_hat_j - x_j||^2), and restarts with
+    #   encoder column = unit(scaled x_i[t]) * RESAMPLE_ENC_SCALE * the layer's mean alive encoder column norm
+    #   decoder row    = unit(x[t, i:] - x_hat[t, i:]) * the layer's median alive decoder row norm (writes what is missing)
+    #   b_enc so it fires on RESAMPLE_FIRING of these tokens, threshold THETA_INIT, adam moments zeroed
+    # every rank sees the same gathered tokens and errors, and resamples its own layers -> {layer: features resampled}
+    n_mb = resid.shape[0] // n_micro
+    batches = [resid[m * n_micro:(m + 1) * n_micro] for m in range(n_mb)]  # [(n_micro, L, D)]
+    # (N, L) squared error per token per layer, N = every rank's tokens
+    err = torch.cat([reconstruct(shard, b)[2].pow(2).sum(-1) for b in batches])
+    # (N, L) error a feature of encoder layer i can fix: sum over its targets j >= i
+    err_from = err.flip(1).cumsum(1).flip(1)
+    Nm = err.shape[0] // n_mb  # gathered tokens per micro-batch
+    dead = {i: (getattr(shard, f"tokens_since_fired_{i}") > DEAD_TOKENS).nonzero().flatten() for i in shard.layers}  # {layer: (n,)}
+    dead = {i: d for i, d in dead.items() if len(d) > 0}
+    tok = {}  # {layer: (n,) token per dead feature}
+    for i, d in dead.items():
+        p = err_from[:, i].pow(2)
+        assert (p > 0).sum() >= len(d), f"L{i}: {len(d)} dead features but {(p > 0).sum()} tokens with error"
+        tok[i] = torch.multinomial(p, len(d), replacement=False, generator=torch.Generator(p.device).manual_seed(SEED + i))
+    # (n, D) encoder directions and (n, (L - i) * D) decoder rows, filled micro-batch by micro-batch
+    enc = {i: torch.empty(len(d), shard.d_in, device=err.device) for i, d in dead.items()}
+    dec = {i: torch.empty(len(d), (shard.n_layers - i) * shard.d_in, device=err.device) for i, d in dead.items()}
+    for m, b in enumerate(batches):
+        x, _, r, _ = reconstruct(shard, b)
+        for i in dead:
+            sel = (tok[i] >= m * Nm) & (tok[i] < (m + 1) * Nm)
+            rows = tok[i][sel] - m * Nm
+            enc[i][sel] = shard.scaled(x, i)[rows]
+            # r = x_hat - x: the missing part is -r
+            dec[i][sel] = -r[rows, i:].flatten(1)
+        del x, r
+    k = max(1, round(err.shape[0] * RESAMPLE_FIRING))
+    top = {}  # {layer: (k + 1, n) largest bias-free pre-activations so far}
+    for i, d in dead.items():
+        alive = getattr(shard, f"tokens_since_fired_{i}") <= DEAD_TOKENS
+        assert alive.any(), f"L{i}: every feature is dead, no norms to copy"
+        enc[i] *= RESAMPLE_ENC_SCALE * shard.W_enc[str(i)][:, alive].norm(dim=0).mean() / enc[i].norm(dim=1, keepdim=True)
+        dec[i] *= shard.dec_norm[i][alive].median() / dec[i].norm(dim=1, keepdim=True)
+        top[i] = torch.full((k + 1, len(d)), -torch.inf, device=err.device)
+    for b in batches:
+        x = gather(b)
+        for i in dead:
+            # (Nm, n) pre-activations without bias
+            h = shard.scaled(x, i) @ enc[i].T
+            top[i] = torch.cat([top[i], h]).topk(k + 1, dim=0).values
+    for i, d in dead.items():
+        # each fires on its k largest tokens
+        shard.reset_features(i, d, enc[i].T, THETA_INIT - top[i][-1], dec[i])
+        for p in (shard.W_enc[str(i)], shard.b_enc[str(i)], shard.log_threshold[str(i)]):
+            st = opt.state[p]
+            st["state1"][..., d] = QZERO1
+            st["state2"][..., d] = QZERO2
+    return {i: len(d) for i, d in dead.items()}
+
+
 def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_RANK, accum=ACCUM, eval_batches=EVAL_BATCHES, eval_chunks=EVAL_CHUNKS,
          log_every=LOG_EVERY, test_every=TEST_EVERY, test_batches=TEST_BATCHES, save_every=SAVE_EVERY,
-         weights_dir=WEIGHTS_DIR, results_dir=RESULTS_DIR):
-    # n_features: features per encoder layer, lam: final tanh sparsity coefficient (ramped linearly from 0 over training)
+         resample_every=RESAMPLE_EVERY, resample_now=False, weights_dir=WEIGHTS_DIR, results_dir=RESULTS_DIR):
+    # n_features: features per encoder layer, lam: final tanh sparsity coefficient (ramped linearly from 0 over training),
+    # resample_now: resample dead features before the first step of this launch (resuming mid-run)
     dist.init_process_group("nccl")
     rank, world = dist.get_rank(), dist.get_world_size()
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -155,6 +220,8 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
     # (n_chunks,) one fixed shuffle of the train chunks; step s, rank r reads perm[(s * world + r) * chunks_per_rank * accum:]
     # [:chunks_per_rank * accum] (its accum micro-batches)
     perm = torch.randperm(len(train), generator=torch.Generator().manual_seed(SEED)).numpy()
+    # (n_chunks - used,) the train chunks no training step reads: resampling tokens
+    unused = perm[max_steps * step_chunks:]
 
     def chunks(arr, order, s, n):
         # this rank's n chunks of batch s (order=None: in file order) -> (n, T) int64 on gpu
@@ -213,6 +280,16 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
         shard.train()
         t0 = time.time()
         for s in range(start, max_steps):
+            if s > 0 and (s % resample_every == 0 or (resample_now and s == start)):
+                t_rs = time.time()
+                n_rs = resample(shard, opt, cap.run(chunks(train, unused, s, chunks_per_rank * accum)), chunks_per_rank * T)
+                # [{layer: features resampled}] per rank
+                all_rs = [None] * world
+                dist.all_gather_object(all_rs, n_rs)
+                n_rs = {i: n for d in all_rs for i, n in d.items()}
+                log(f"resampled at step {s}: {sum(n_rs.values())} dead features ({sum(n_rs.values()) / (N_LAYERS * n_features):.1%}), "
+                    f"per layer {[n_rs.get(i, 0) for i in range(N_LAYERS)]}, {time.time() - t_rs:.0f}s")
+                t0 = time.time()
             # tanh sparsity coefficient: linear 0 -> lam over all of training
             lam_s = lam * s / max_steps
             se = torch.zeros(N_LAYERS, device=dev)  # (L,) sum ||x_hat_j - x_j||^2 over the step's tokens
@@ -385,7 +462,7 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
         # (F,) float64 firing fraction on eval tokens
         d = (fire[i] / n_tokens).cpu().numpy()
         d.tofile(results_dir / "density" / f"L{i}.density.bin")
-        stats[f"L{i}"] = {"dead_frac_train": (getattr(shard, f"tokens_since_fired_{i}") > 10_000_000).float().mean().item(),
+        stats[f"L{i}"] = {"dead_frac_train": (getattr(shard, f"tokens_since_fired_{i}") > DEAD_TOKENS).float().mean().item(),
                           "density_hist": [float((d == 0).mean())] + (np.histogram(np.log10(d[d > 0]), bins=[-np.inf, -5, -4, -3, -2, -1, 0.0001])[0] / len(d)).tolist()}
     all_stats = [None] * world
     dist.all_gather_object(all_stats, stats)
@@ -406,4 +483,5 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]), float(sys.argv[2]))
+    assert len(sys.argv) == 3 or sys.argv[3:] == ["resample"], "usage: <features per layer> <final lambda> [resample]"
+    main(int(sys.argv[1]), float(sys.argv[2]), resample_now=len(sys.argv) == 4)

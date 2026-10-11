@@ -46,6 +46,10 @@ CHUNK_ELEMS = 2 ** 26  # decoder elements per streamed update chunk (256MB of fp
 # bitsandbytes' signed / unsigned dynamic quantization maps for adam's first / second moment (what Adam8bit uses)
 QMAP1 = BF.create_dynamic_map(signed=True)
 QMAP2 = BF.create_dynamic_map(signed=False)
+# state bytes that decode to 0.0 in those maps (a zeroed adam moment)
+QZERO1 = int((QMAP1 == 0).nonzero())
+QZERO2 = int((QMAP2 == 0).nonzero())
+DEAD_TOKENS = 10_000_000  # a feature that has not fired in this many tokens counts as dead
 
 
 class JumpReLU(torch.autograd.Function):
@@ -313,5 +317,23 @@ class WCCShard(nn.Module):
             counter += a.shape[0]
             counter[active.any(0)] = 0
             l0[i] = active.sum(-1).float().mean().item()
-            dead[i] = (counter > 10_000_000).float().mean().item()
+            dead[i] = (counter > DEAD_TOKENS).float().mean().item()
         return l0, dead
+
+    @torch.no_grad()
+    def reset_features(self, i, idx, W_enc_cols, b_enc, W_dec_rows):
+        # re-initializes features idx (n,) of encoder layer i: W_enc_cols (d_in, n), b_enc (n,), W_dec_rows (n, (L - i) * d_in)
+        # fp32 on gpu. threshold back to THETA_INIT, tokens_since_fired 0, decoder adam moments zeroed (the small
+        # parameters' adam state belongs to the trainer's optimizer)
+        self.W_enc[str(i)][:, idx] = W_enc_cols
+        self.b_enc[str(i)][idx] = b_enc
+        self.log_threshold[str(i)][idx] = math.log(THETA_INIT)
+        getattr(self, f"tokens_since_fired_{i}")[idx] = 0
+        M = self.dec_master[i].shape[1]
+        idx_c = idx.cpu()
+        self.dec_master[i][idx_c] = W_dec_rows.cpu()
+        # the flat 8-bit states viewed as (F, M): one row per feature
+        self.dec_adam[i]["s1"].view(-1, M)[idx_c] = QZERO1
+        self.dec_adam[i]["s2"].view(-1, M)[idx_c] = QZERO2
+        self.dec_W[i][idx] = W_dec_rows.bfloat16()
+        self.dec_norm[i][idx] = W_dec_rows.norm(dim=1)
