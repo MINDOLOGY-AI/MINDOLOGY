@@ -43,7 +43,7 @@ SAVE_EVERY = 5000
 EVAL_BATCHES = 800  # global, split over ranks
 EVAL_CHUNKS = 4  # x 128 = 512 tokens per rank per eval batch: 800 x 512 = 410k eval tokens, same as sae_resid_topk
 SEED = 21
-RESAMPLE_EVERY = 25_000  # steps between dead-feature resamplings (Anthropic 2023 resampled at 25k, 50k, 75k, 100k)
+RESAMPLE_EVERY = 10_000  # steps between dead-feature resamplings (Anthropic 2023: at 25k, 50k, 75k, 100k of a longer run)
 RESAMPLE_ENC_SCALE = 0.2  # resampled encoder column norm = this x the layer's mean alive encoder column norm (Anthropic 2023)
 RESAMPLE_FIRING = 4e-4  # share of the resampling tokens a resampled feature fires on at first
 
