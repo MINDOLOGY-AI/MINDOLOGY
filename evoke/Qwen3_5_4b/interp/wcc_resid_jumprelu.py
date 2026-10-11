@@ -186,9 +186,10 @@ def resample(shard, opt, resid, n_micro):
         # each fires on its k largest tokens
         shard.reset_features(i, d, enc[i].T, THETA_INIT - top[i][-1], dec[i])
         for p in (shard.W_enc[str(i)], shard.b_enc[str(i)], shard.log_threshold[str(i)]):
+            # 8-bit states (uint8 codes) for tensors of 4096+ elements, fp32 below
             st = opt.state[p]
-            st["state1"][..., d] = QZERO1
-            st["state2"][..., d] = QZERO2
+            st["state1"][..., d] = QZERO1 if st["state1"].dtype == torch.uint8 else 0.0
+            st["state2"][..., d] = QZERO2 if st["state2"].dtype == torch.uint8 else 0.0
     return {i: len(d) for i, d in dead.items()}
 
 
