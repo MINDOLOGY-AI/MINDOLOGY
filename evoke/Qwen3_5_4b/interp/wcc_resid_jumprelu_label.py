@@ -115,11 +115,14 @@ def main(phase, pick_chunks=PICK_CHUNKS, label_limit=None, weights_dir=WEIGHTS_D
     summary = {}  # {name: core stats + autointerp stats}
     rows = []  # [str] markdown table rows
     for n in names:
-        chunk = np.fromfile(picks_dir / f"{n}.pick_chunk.bin", dtype=np.int32).reshape(pm["hooks"][n], K_picks)
-        rs = [json.loads(l) for l in (labels_dir / f"{n}.jsonl").read_text().splitlines()]
+        W = pm["window_before"] + 1 + pm["window_after"]
+        # (D, K_picks) each pick's activation at its center token; the tracker also keeps zero-activation picks, so
+        # a unit fired at a pick iff this is > 0 (label.py's "no positive activation" test)
+        pick_act = np.fromfile(picks_dir / f"{n}.windows.bin", dtype=np.float16).reshape(pm["hooks"][n], K_picks, W)[:, :, pm["window_before"]]
+        rs = [json.loads(l) for l in open(labels_dir / f"{n}.jsonl")]
         sc = np.array([r["score"] for r in rs if r["score"] is not None])
-        summary[n] = {**core["saes"][n], "never_fired_frac": float((chunk[:, 0] < 0).mean()),
-                      "full_picks_frac": float((chunk >= 0).all(1).mean()), "n_scored": int(len(sc)),
+        summary[n] = {**core["saes"][n], "never_fired_frac": float((pick_act[:, 0] <= 0).mean()),
+                      "full_picks_frac": float((pick_act > 0).all(1).mean()), "n_scored": int(len(sc)),
                       "autointerp_mean": float(sc.mean()), "autointerp_median": float(np.median(sc)),
                       "autointerp_frac_ge_0.7": float((sc >= 0.7).mean())}
         s = summary[n]

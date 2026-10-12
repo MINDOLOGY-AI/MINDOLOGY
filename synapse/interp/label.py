@@ -64,7 +64,8 @@ async def label_units(picks_dir, labels_dir, tokenizer, model, hook_names, worke
             "quant": np.fromfile(picks_dir / f"{name}.quantiles.bin", dtype=np.float16).reshape(d, meta["n_quantiles"]).astype(np.float32),
         }
         out_path = labels_dir / f"{name}.jsonl"
-        done = {json.loads(line)["unit"] for line in out_path.read_text().splitlines()} if out_path.exists() else set()  # {int}
+        # file iteration splits on \n only: str.splitlines() also splits on U+2028 etc, which json.dumps(ensure_ascii=False) leaves raw in labels
+        done = {json.loads(line)["unit"] for line in open(out_path)} if out_path.exists() else set()  # {int}
         todo += [(name, u) for u in (units[name] if units else range(d)) if u not in done]
         print(f"{name}: {len([1 for n, _ in todo if n == name])} units to label ({len(done)} already done)", flush=True)
 
