@@ -19,9 +19,10 @@ REPO_ROOT = Path.cwd()
 #   wcc_jumprelu: one encoder layer of a weakly causal crosscoder (WCCEncoder), args {"k"}, from the set's "shared"
 #                 file + the part's weights and "layer"
 KINDS = ("topk_sae", "wcc_jumprelu")
-# kinds whose latents can be edited and attributed: their decoder writes back into the point they read
-# (synapse/interp/sae_intervene.py, sae_attribute.py); a crosscoder feature writes into every later layer
-EDITABLE = ("topk_sae",)
+# kinds whose latents can be edited and attributed (synapse/interp/sae_intervene.py, sae_attribute.py): those with a
+# decoder row into the point they read. a crosscoder feature is edited / attributed through its write into its own
+# layer (WCCEncoder.W_dec); the model carries the edit on to the later layers
+EDITABLE = ("topk_sae", "wcc_jumprelu")
 
 
 class HookSet:

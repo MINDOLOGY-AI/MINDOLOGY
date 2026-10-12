@@ -13,13 +13,10 @@ from urllib.parse import urlparse
 import torch
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
-from transformers.convert_slow_tokenizer import bytes_to_unicode
 
 from interpviz.back.config import DEVICE
-from interpviz.back.hooks import HookSet
-from synapse.interp.sae_attribute import attribute
-from synapse.interp.sae_intervene import edited
 from interpviz.back.inspector import ModelInspector
+from interpviz.back.probes import Probes
 from interpviz.back.layout import compute_layout, compute_effective_graph
 from interpviz.back.routing import compute_routes
 
@@ -57,25 +54,8 @@ meta_folder: str | None = None
 raw_graph: dict | None = None
 # current compute device — mutable via the set_device message (cpu <-> cuda)
 device = DEVICE
-# sae tab: the model's tokenizer (from meta model.tokenizer) and its raw utf-8 bytes per token id
-tokenizer = None
-token_bytes: list[bytes] | None = None
-# the probes tab's one loaded HookSet: the set picked in its dropdown, loaded on its first request (probe weights are
-# GBs; the graph tab never needs them), replaced when another set is picked
-hook_set: HookSet | None = None
-# top next-token guesses shown per position
-N_NEXT = 5
-# tokens a latent card lists as most pushed toward / away from
-N_LOGITS = 10
-# most results a label search returns
-SEARCH_LIMIT = 50
-# {(set, part): (read point, probe)} every part of the loaded set if it is editable (else {}), the saes argument of
-# attribute / edited
-sae_probes = None
-# (1, T) token ids of the last sae_run (prompt + generated), what sae_attribute explains
-sae_ids = None
-# [((set, part), pos, feature id, value)] the feature edits of the last sae_run, also applied by sae_attribute
-sae_edits = []
+# the probes tab (its tokenizer, loaded hook set, last run and edits), made by load_model when the meta names a tokenizer
+probes: Probes | None = None
 # the sae tab's model on cpu: an fp32 copy of the loaded bf16 model. cpus without native bf16 (avx2) emulate it,
 # ~300x slower for attribution's backward. made on the first sae request on cpu, dropped on a device change
 cpu_fp32_model = None
@@ -207,17 +187,13 @@ def _build_display():
 
 
 def handle(msg):
-    global inspector, meta, meta_folder, raw_graph, device, tokenizer, token_bytes, hook_set, sae_probes, sae_ids, sae_edits, cpu_fp32_model
+    global inspector, meta, meta_folder, raw_graph, device, probes, cpu_fp32_model
     t = msg["type"]
 
     if t == "load_meta":
         inspector = None
         raw_graph = None
-        tokenizer = None
-        token_bytes = None
-        hook_set = None
-        sae_probes = None
-        sae_ids = None
+        probes = None
         cpu_fp32_model = None
         meta_folder = msg["folder"]
         meta = load_meta(meta_folder)
@@ -239,13 +215,7 @@ def handle(msg):
         )
         inspector = ModelInspector(model, example_inputs, dynamic_dims=m.get("dynamic_dims"))
         raw_graph = inspector.graph()
-        if m.get("tokenizer"):
-            # "module.path.function" that returns the tokenizer
-            mod_path, fn = m["tokenizer"].rsplit(".", 1)
-            tokenizer = getattr(importlib.import_module(mod_path), fn)()
-            # {byte-level BPE char: byte}, inverse of the tokenizer's byte -> printable-char map
-            byte_of = {c: b for b, c in bytes_to_unicode().items()}
-            token_bytes = [bytes(byte_of[c] for c in tokenizer.convert_ids_to_tokens(i)) for i in range(len(tokenizer))]
+        probes = Probes(meta, REPO_ROOT / meta_folder) if m.get("tokenizer") else None
 
         display_nodes, display_edges = _build_display()
         return {
@@ -253,7 +223,7 @@ def handle(msg):
             "device": device,
             "displayNodes": display_nodes,
             "displayEdges": display_edges,
-            "tokenizer": tokenizer is not None,
+            "tokenizer": probes is not None,
         }
 
     elif t == "set_device":
@@ -271,7 +241,8 @@ def handle(msg):
             # captured tensors are stale (old device) — force a fresh forward
             inspector.captured_tensors = {}
             cpu_fp32_model = None
-            sae_ids = None
+            if probes is not None:
+                probes.ids = None
         device = target
         return {"type": t, "device": device}
 
@@ -401,118 +372,20 @@ def handle(msg):
         return {"type": t, "capture_mode": meta["capture_mode"]}
 
     elif t == "sae_run":
-        # text -> tokens (+ n greedy generated tokens) -> one forward capturing every hook's read point
-        # -> tokens, next-token guesses per position, and every part of hook set msg["set"]: its latents per token
-        assert inspector and tokenizer, "load a model with a tokenizer first"
-        # {set name: hook set file relative to the meta folder}
-        files = {Path(f).stem: f for f in meta.get("hooks", [])}
-        assert msg["set"] in files, f"no hook set {msg['set']!r} in interpvizMeta.json hooks, have {list(files)}"
-        if hook_set is None or hook_set.name != msg["set"]:
-            # drop the old set's GBs before loading the next
-            hook_set = None
-            sae_probes = None
-            hook_set = HookSet(REPO_ROOT / meta_folder / files[msg["set"]])
-            sae_probes = {(hook_set.name, pn): (part["reads"], part["probe"]) for pn, part in hook_set.parts.items()} if hook_set.editable else {}
-        assert hook_set.editable or not msg["edits"], f"{hook_set.name} ({hook_set.kind}) latents can't be edited"
-        # [[set, part, pos, feature id, value]] from the ui: set these features at these tokens (see synapse/interp/sae_intervene.py)
-        sae_edits = [((sn, pn), pos, fid, value) for sn, pn, pos, fid, value in msg["edits"]]
-        model = sae_model()
-        if msg["template"]:
-            # the chat template starts with bos itself
-            prompt = tokenizer.apply_chat_template([{"role": "user", "content": msg["text"]}], add_generation_prompt=True,
-                                                   tokenize=True, return_dict=True)["input_ids"]
-        else:
-            # models without a bos token (qwen) start straight with the text
-            prompt = ([tokenizer.bos_token_id] if tokenizer.bos_token_id is not None else []) + tokenizer.encode(msg["text"])
-        # (1, T) token ids, grown by greedy generation
-        ids = torch.tensor([prompt], device=device)
-        special_ids = set(tokenizer.all_special_ids)  # {int}
-        with torch.no_grad(), edited(model, sae_probes, sae_edits):
-            for _ in range(msg["n_generate"]):
-                # (1, T, V) -> (1, 1)
-                nxt = model(ids)[:, -1].argmax(-1, keepdim=True)
-                ids = torch.cat([ids, nxt], dim=1)
-                # any special token ends it (qwen: <|im_end|> after a chat turn, <|endoftext|> after plain text)
-                if nxt.item() in special_ids:
-                    break
-
-        # {read point: (T, d) float32 cpu} filled by forward hooks on the read points' modules. the edit hooks go in
-        # first, so the capture hooks (run after them) see the edited activations
-        captured = {}
-        handles = []  # [RemovableHandle]
-        with torch.no_grad(), edited(model, sae_probes, sae_edits):
-            for point in {part["reads"] for part in hook_set.parts.values()}:
-                path, side = point.rsplit(":", 1)
-                module = model.get_submodule(path)
-                if side == "out":
-                    # decoder layers return (hidden_states, present_kv): the activation is the first element
-                    handles.append(module.register_forward_hook(
-                        lambda mod, args, out, point=point: captured.__setitem__(point, (out[0] if isinstance(out, tuple) else out)[0].float().cpu())))
-                else:
-                    handles.append(module.register_forward_pre_hook(
-                        lambda mod, args, point=point: captured.__setitem__(point, args[0][0].float().cpu())))
-            try:
-                # (1, T, V)
-                logits = model(ids)
-            finally:
-                for h in handles:
-                    h.remove()
-
-        sae_ids = ids
-        # (T, V) -> (T, N_NEXT)
-        probs, nxt = logits[0].float().softmax(-1).topk(N_NEXT, dim=-1)
-        return {
-            "type": t,
-            "tokens": [tokenizer.decode([i]) for i in ids[0].tolist()],
-            "n_prompt": len(prompt),
-            # the generated continuation as text
-            "output": tokenizer.decode(ids[0, len(prompt):].tolist()),
-            "next": [[[tokenizer.decode([i]), round(p, 3)] for i, p in zip(ir, pr)] for ir, pr in zip(nxt.tolist(), probs.tolist())],
-            "hooks": {hook_set.name: {"display": hook_set.display, "editable": hook_set.editable, "parts": hook_set.encode(captured)}},
-        }
+        assert inspector and probes, "load a model with a tokenizer first"
+        return {"type": t, **probes.run(sae_model(), msg["text"], msg["template"], msg["n_generate"], msg["edits"], msg["set"])}
 
     elif t == "sae_attribute":
-        # attribution of every hook part's active latents (+ bias and error node per cell) to the prediction of token
-        # column msg["target"] of the last run, with its edits (see synapse/interp/sae_attribute.py)
-        assert sae_ids is not None, "run a prompt first"
-        assert hook_set.editable, f"{hook_set.name} ({hook_set.kind}) latents can't be attributed"
-        with edited(sae_model(), sae_probes, sae_edits):
-            r = attribute(sae_model(), sae_ids, sae_probes, msg["target"])
-        parts = {}  # {set: {part: {"ids": [[int]], "attr": [[float]], "err": [float], "bias": [float]}}}, per token strongest activation first, zeros dropped
-        for (sn, pn), p in r["parts"].items():
-            n = hook_set.display["max_features"]
-            keep = p["vals"][:, :n] > 0
-            parts.setdefault(sn, {})[pn] = {
-                "ids": [row[k].tolist() for row, k in zip(p["idx"][:, :n], keep)],
-                "attr": [[round(a, 4) for a in row[k].tolist()] for row, k in zip(p["attr"][:, :n], keep)],
-                "err": [round(e, 4) for e in p["err"].tolist()],
-                "bias": [round(b, 4) for b in p["bias"].tolist()],
-            }
-        return {"type": t, "target": msg["target"], "logit": round(r["logit"], 3), "parts": parts}
+        assert probes, "load a model with a tokenizer first"
+        return {"type": t, **probes.attribute(sae_model(), msg["target"])}
 
     elif t == "sae_search":
-        # labels of one hook part containing every word of msg["query"], best label score first
-        assert hook_set is not None and hook_set.name == msg["set"], "run a prompt with this hook set first"
-        return {"type": t, "results": hook_set.search(msg["part"], msg["query"], SEARCH_LIMIT)}
+        assert probes, "load a model with a tokenizer first"
+        return {"type": t, **probes.search(msg["set"], msg["part"], msg["query"])}
 
     elif t == "sae_feature":
-        # one latent's card: label, score, density, example windows from its picks, and (if the meta names the model's
-        # final norm and unembedding in model.logit_lens) the tokens its write pushes the next-token logits toward / away from
-        assert hook_set is not None and hook_set.name == msg["set"], "run a prompt with this hook set first"
-        card = hook_set.feature(msg["part"], msg["unit"], token_bytes)
-        lens = meta["model"].get("logit_lens")
-        if lens:
-            m = sae_model()
-            norm, head = m.get_submodule(lens["norm"]), m.get_submodule(lens["unembed"])
-            # (d_in,) the latent's write times the final norm's per-dim gain (lens["centered"]: the norm scales by 1 + weight,
-            # qwen3.5). the norm's per-token 1 / rms is left out, so the numbers rank tokens, they are not exact logit changes
-            v = hook_set.out_dir(msg["part"], msg["unit"]) * (norm.weight.float().cpu() + (1 if lens["centered"] else 0))
-            # (V, d_in) @ (d_in,) -> (V,)
-            eff = (head.weight @ v.to(head.weight)).float().cpu()
-            up, down = eff.topk(N_LOGITS), (-eff).topk(N_LOGITS)
-            card["logits"] = {"up": [[tokenizer.decode([i]), round(x, 3)] for x, i in zip(up.values.tolist(), up.indices.tolist())],
-                              "down": [[tokenizer.decode([i]), round(-x, 3)] for x, i in zip(down.values.tolist(), down.indices.tolist())]}
-        return {"type": t, **card}
+        assert probes, "load a model with a tokenizer first"
+        return {"type": t, **probes.feature(sae_model(), msg["set"], msg["part"], msg["unit"])}
 
     elif t == "update_display":
         assert meta and meta_folder
