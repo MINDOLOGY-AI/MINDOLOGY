@@ -119,10 +119,11 @@ class HookSet:
         examples = []  # [{"pieces": [str], "acts": [float]}]
         for s in range(pm["top_k"] + pm["iw_k"]):
             c, p = int(pk["chunk"][unit, s]), int(pk["pos"][unit, s])
-            if c < 0:
-                continue
             # (W,) activations on the window
             acts = pk["windows"][unit, s].astype(np.float32)
+            # an empty slot, or a pick where the unit did not fire (the picks tracker also keeps zero-activation picks)
+            if c < 0 or acts[wb] <= 0:
+                continue
             pieces = window_pieces([token_bytes[i] for i in pk["tokens"][c, p - wb:p + wa + 1]])
             examples.append({"pieces": [t for t, _ in pieces], "acts": [round(float(acts[js].max()), 2) for _, js in pieces]})
             if len(examples) == self.display["max_examples"]:

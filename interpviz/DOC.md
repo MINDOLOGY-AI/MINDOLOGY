@@ -11,7 +11,8 @@ run from repo root: `venv/bin/python -m interpviz.app`, open `localhost:8000`. i
 - `layout.py` — group collapse + grid placement. `compute_effective_graph()` hides collapsed groups into single boxes and rewires boundary edges. `compute_layout()` assigns each node an integer (row, col): rows by topological depth (inputs bottom, outputs top), columns by clustering nodes that share consumers; parentless weights sit one row above their lowest consumer; dead nodes (no consumers) sit at row 0.
 - `routing.py` — 90° edge routes: straight if same column, else a 6-point path through the margin lane next to the target. ports are spread along node borders so parallel edges don't overlap.
 - `server.py` — single websocket `/ws`, request/response by `_id`, statics from `front/` at `/`. holds global state: loaded meta, inspector, raw graph. every mutation (group/expand/rename) re-runs layout+routing and persists `interpvizMeta.json`. cross-origin websockets rejected.
-- `hooks.py` — `HookSet`: loads one hook set file (see Hooks), `encode()` the captured activations per part, `feature()` one latent's card.
+- `hooks.py` — `HookSet`: loads one hook set file (see Hooks), `encode()` the captured activations per part, `feature()` one latent's card (pick windows where the latent fired only).
+- `probes.py` — `Probes`: the probes tab's requests (run, attribute, search, feature) and state (tokenizer, loaded hook set, last run, edits), without the websocket; the caller passes the model. `server.py` forwards its `sae_*` messages here, `api.py` calls it directly.
 - `config.py` — `DEVICE` = `"cuda"` (startup device: interpviz runs on weighty; the top-bar button moves the model to cpu and back).
 
 ## frontend (`front/`)
@@ -103,12 +104,12 @@ a hook = a trained probe on the model: **reads** activations at a point, encodes
   }
 }
 ```
-- `kind` (`hooks.py` `KINDS`): `topk_sae` = `TopKSAE` built with `args`, loads `weights` (a state_dict); `wcc_jumprelu` = one crosscoder encoder layer (`synapse/probes/sae/WCCEncoder.py`), `args` = `{"k"}`, plus a set-level `"shared"` (the crosscoder's `shared.pt`) and a per-part `"layer"`, no `writes`. both have `encode(x) -> (vals, idx)`, active latents strongest first.
+- `kind` (`hooks.py` `KINDS`): `topk_sae` = `TopKSAE` built with `args`, loads `weights` (a state_dict); `wcc_jumprelu` = one crosscoder encoder layer (`synapse/probes/sae/WCCEncoder.py`), `args` = `{"k"}`, plus a set-level `"shared"` (the crosscoder's `shared.pt`) and a per-part `"layer"`, no `writes`. both have `encode(x) -> (vals, idx)`, active latents strongest first, and `W_dec` / `norm_factor` / `b_dec` (a crosscoder layer's `W_dec` = its features' writes into their own layer).
 - `display.max_features` = latents per token sent to the ui (hover / side list); `on_cell` = labels written in each grid cell; `max_examples` = example windows per latent card.
 - `parts` = the probes of the set; latent ids are `part:unit`, e.g. `L8:123`. `labels` = the label pipeline's jsonl, `density` = `(D,) float64`, `picks` = prefix of the picks files (`L8.windows.bin`, ...; their `meta.json` sits next to them and names the token dataset).
 
 ## probes tab
-- the **method** dropdown (left of the text box) picks one hook set (`sae_resid_topk`, `wcc_resid_jumprelu`, ...): only that set is loaded (on its first run, replacing the previous one) and shown; switching clears edits / attribution and reruns the prompt. attribution and edits only for sets whose latents write back into the point they read (`topk_sae`); for a crosscoder the attribute button is disabled and cards have no set box.
+- the **method** dropdown (left of the text box) picks one hook set (`sae_resid_topk`, `wcc_resid_jumprelu`, ...): only that set is loaded (on its first run, replacing the previous one) and shown; switching clears edits / attribution and reruns the prompt. attribution and edits for every kind (`hooks.py` `EDITABLE`): a crosscoder feature is edited and attributed through its write into its own layer, the model carries the change on to later layers; its row's error node is everything that write and the bias leave unexplained, the earlier layers' features' writes into this layer included.
 - type english → tokens (with a `bos` first if the model has one; qwen has none) or the model's chat template → optional greedy generation of n tokens (stops at any special token) → one forward with torch forward hooks on every read point → every part encodes its point.
 - grid: one column per token (generated ones in lavender, continuing right), rows top → bottom: next-token guess per position, parts in reverse file order (L15 ... L0), tokens. a cell shows its top `on_cell` latent labels, shaded by the strongest value vs the row's max. side panel, top half: the hovered cell's latents with their values (or the top 5 next-token guesses); click pins the cell (hover stops changing the panel, click again to unpin). bottom half: a label search over the cell's layer (every typed word must appear, best label score first, 50 max) and the selected latent (click one in either half): its value at the cell's token, a **set** box, and its card (label, score, density, `max_examples` pick windows, pieces shaded by activation).
 - mouse wheel scrolls the grid sideways, shift + wheel up/down.
@@ -131,3 +132,16 @@ a hook = a trained probe on the model: **reads** activations at a point, encodes
 
 - `tests/ws_test.py` — fast suite (xor): boots the server, full ws flow incl. cross-origin rejection, groups, forward, device, marking. `venv/bin/python -m interpviz.tests.ws_test`
 - `tests/qwen_smoke.py` — cpu, ~2 min: real weights, trace, forward, group validation. run after changing the qwen wrapper or gen_groups.
+
+# api
+
+`interpviz/api.py`: the probes tab from python, for scripts and experiments. no server, browser, fastapi or graph trace: it builds the model straight from the meta (fp32 on cpu, like the tab), then calls `Probes`.
+```python
+iv = Interp("interpviz/models/qwen3_5_4b", "wcc_resid_jumprelu")   # device="cpu" by default
+r = iv.run("The Eiffel Tower is located in the city of Paris", edits=[("L29", 9, 11159, 0.0)], n_generate=0)  # = sae_run reply
+a = iv.probes.attribute(iv.model, len(r["tokens"]) - 1)             # = sae_attribute reply, target = last token
+c = iv.probes.feature(iv.model, iv.set, "L29", 11159)               # = sae_feature reply; iv.probes.search(iv.set, part, query) likewise
+iv.next_logprobs("The Eiffel Tower is located in the city of", [" Paris", " Rome"], edits=[("L29", 9, 11159, 0.0)])  # {word: log prob}
+```
+edits are `(part, token pos, feature id, value)`. qwen 4b + the 32 crosscoder layers: ~50 s to load, ~30 GB ram, an attribution ~1 s on 16 cpu threads. rank attributions with dense latents (density > ~0.1) filtered out: they fire on most tokens, act like a constant and carry meaningless labels.
+
