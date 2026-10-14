@@ -56,6 +56,9 @@ class Qwen3_5Config:
     # inference
     use_cache: bool = True
     use_flash_attention: bool = False
+    # gated deltanet layers on flash-linear-attention's fused triton kernels (gpu only, not traceable by torch.export)
+    # instead of the pure-torch reference loops; load_qwen3_5_model(fast=True) turns this and use_flash_attention on
+    use_fla: bool = False
 
     # lm head
     tie_word_embeddings: bool = True

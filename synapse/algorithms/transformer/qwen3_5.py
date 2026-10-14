@@ -109,6 +109,7 @@ class Qwen3_5DecoderLayer(nn.Module):
                 conv_kernel_size=config.linear_conv_kernel_dim,
                 layer_idx=layer_idx,
                 rms_norm_eps=config.rms_norm_eps,
+                fast=config.use_fla,
             )
         elif self.layer_type == "full_attention":
             self.self_attn = GQA(

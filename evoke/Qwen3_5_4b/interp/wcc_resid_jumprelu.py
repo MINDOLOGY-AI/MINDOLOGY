@@ -167,7 +167,7 @@ def main(n_features, lam, train_tokens=TRAIN_TOKENS, chunks_per_rank=CHUNKS_PER_
     owned = assign_layers(N_LAYERS, world)
     log(f"world {world}, layers per rank {owned}, {n_features} features per layer, lambda {lam}, {max_steps} steps of {step_chunks * T} tokens")
     shard = WCCShard(owned[rank], N_LAYERS, D_IN, n_features, dev, owns_bias=rank == 0)
-    lm = load_qwen3_5_model(device=dev)[0]
+    lm = load_qwen3_5_model(device=dev, fast=True)[0]
     lm.config.use_cache = False
     for p in lm.parameters():
         p.requires_grad = False

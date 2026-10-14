@@ -16,8 +16,11 @@ Block layout (matching the HF Qwen3.5 checkpoint names):
   recurrent (single-token decode)
 - output is gated RMSNorm against z (in_proj_z), then out_proj
 
-The torch fallback kernels below are ported from the HF reference so there is
-no runtime dependency on causal_conv1d / flash_linear_attention.
+Two implementations of the gated delta rule, picked per layer by `fast`:
+- fast=False: the torch kernels below, ported from the HF reference (python loops over the chunk, fp32). runs anywhere
+  and is traceable by torch.export (interpviz), but launches hundreds of tiny gpu ops per layer.
+- fast=True: flash-linear-attention's fused triton kernels (chunk_gated_delta_rule / fused_recurrent_gated_delta_rule,
+  what HF's Qwen3.5 uses when fla is installed): same math, gpu only, for training and bulk inference.
 
 Cache protocol: cache_params must expose
     conv_states[layer_idx], recurrent_states[layer_idx],
@@ -29,6 +32,8 @@ Cache protocol: cache_params must expose
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
 
 from ..basic.RMSnorm import RMSNorm
 
@@ -249,8 +254,11 @@ class GatedDeltaNet(nn.Module):
         conv_kernel_size,
         layer_idx,
         rms_norm_eps=1e-6,
+        fast=False,
     ):
         super().__init__()
+        # fla's fused triton kernels instead of the torch reference (see the module docstring)
+        self.fast = fast
         self.hidden_size = hidden_size
         self.num_v_heads = num_v_heads
         self.num_k_heads = num_k_heads
@@ -362,7 +370,8 @@ class GatedDeltaNet(nn.Module):
             key = key.repeat_interleave(self.num_v_heads // self.num_k_heads, dim=2)
 
         if use_precomputed_states and seq_len == 1:
-            core_attn_out, last_recurrent_state = torch_recurrent_gated_delta_rule(
+            recurrent_fn = fused_recurrent_gated_delta_rule if self.fast else torch_recurrent_gated_delta_rule
+            core_attn_out, last_recurrent_state = recurrent_fn(
                 query,
                 key,
                 value,
@@ -373,7 +382,8 @@ class GatedDeltaNet(nn.Module):
                 use_qk_l2norm_in_kernel=True,
             )
         else:
-            core_attn_out, last_recurrent_state = torch_chunk_gated_delta_rule(
+            chunk_fn = chunk_gated_delta_rule if self.fast else torch_chunk_gated_delta_rule
+            core_attn_out, last_recurrent_state = chunk_fn(
                 query,
                 key,
                 value,

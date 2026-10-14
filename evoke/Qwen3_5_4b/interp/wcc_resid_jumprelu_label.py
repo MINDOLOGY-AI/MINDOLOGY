@@ -75,7 +75,7 @@ def main(phase, pick_chunks=PICK_CHUNKS, label_limit=None, weights_dir=WEIGHTS_D
             torch.cuda.set_device(dev)
         torch.manual_seed(SEED)
         meta = json.loads((BIN_DIR / "meta.json").read_text())
-        lm = load_qwen3_5_model(device=dev)[0]
+        lm = load_qwen3_5_model(device=dev, fast=True)[0]
         lm.config.use_cache = False
         # every rank costs the same per layer here (one encoder + one tracker), so layers go round robin
         encoders = {names[i]: (i, WCCEncoder(weights_dir / f"L{i}.pt", weights_dir / "shared.pt", i).to(dev))

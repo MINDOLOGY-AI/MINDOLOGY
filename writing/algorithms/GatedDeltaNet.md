@@ -103,6 +103,8 @@ memory per layer: 32 heads × 128 × 128 = 524k numbers, constant. full attentio
 
 so it's a loop of T/64 steps instead of T, with matmuls inside. same result as the recurrent kernel up to float error.
 
+**fast path** (`GatedDeltaNet(fast=True)`, set by `config.use_fla` / `load_qwen3_5_model(fast=True)`): the same two kernels from flash-linear-attention (`fla-core`), `chunk_gated_delta_rule` and `fused_recurrent_gated_delta_rule`, as fused triton kernels. the torch versions above launch hundreds of tiny gpu ops per layer (the 63-step forward substitution, fp32 casts), so they are what the gpu waits on in training. the fast path is gpu only and torch.export can't trace it, so interpviz and cpu runs keep `fast=False`. `evoke/Qwen3_5_4b/run/verify_fast_parity.py` compares the two.
+
 ## 8. the cache (generation only)
 
 per GDN layer, two tensors (see `Qwen3_5Cache` in `transformer/qwen3_5.py`):

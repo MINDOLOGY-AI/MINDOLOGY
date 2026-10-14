@@ -171,7 +171,7 @@ def main(phase, layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train
     picks_dir = results_dir / "picks"
     labels_dir = results_dir / "labels"
     if phase == "gpu":
-        lm = load_qwen3_5_model()[0]
+        lm = load_qwen3_5_model(fast=True)[0]
         # no kv / recurrent-state cache: every forward here is a single full pass
         lm.config.use_cache = False
 

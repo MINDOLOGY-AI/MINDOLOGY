@@ -15,6 +15,7 @@ Run from MINDOLOGY root as a module:
     python -m mind.evoke.Qwen3_5_4b.run.loader
 """
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -50,14 +51,16 @@ def _resolve_shards(weights_dir):
     raise FileNotFoundError(f"no safetensors checkpoint found under {weights_dir}")
 
 
-def load_qwen3_5_model(device=None, dtype=None):
+def load_qwen3_5_model(device=None, dtype=None, fast=False):
     """
     Build Qwen3.5-4B (text branch) from synapse algorithms and load HF weights.
 
     device: torch device; default cuda if available else cpu
     dtype:  torch dtype; default bfloat16 on cuda, float32 on cpu
+    fast:   gpu kernels for both attention kinds (use_flash_attention: sdpa, use_fla: fla's gated deltanet kernels);
+            False keeps the config as is (the traceable torch path unless a caller set the flags)
     """
-    config = QWEN3_5_4B_CONFIG
+    config = dataclasses.replace(QWEN3_5_4B_CONFIG, use_flash_attention=True, use_fla=True) if fast else QWEN3_5_4B_CONFIG
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
