@@ -23,6 +23,10 @@ OUT_DIR = Path.cwd() / "data" / "datasteps" / "tokenized" / "qwen3_5_4b_interp_d
 
 
 def main():
+    # meta.json is written last: if it exists the bins are complete, so a rerun (run_full.sh after a failure) skips this step
+    if (OUT_DIR / "meta.json").exists():
+        print(f"{OUT_DIR} already tokenized, skipping")
+        return
     tok = load_qwen3_5_tokenizer()
     # qwen's document separator in pretraining
     doc_sep = tok.convert_tokens_to_ids("<|endoftext|>")
