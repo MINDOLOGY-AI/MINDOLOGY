@@ -75,8 +75,9 @@ def simple_train(
             global_step += 1
 
             if (cur_batch_num + 1) % batches_per_log == 0:
+                # metrics may be 0-dim gpu tensors (read here only, every batches_per_log, so the step never syncs)
                 for k, v in metrics.items():
-                    losses.setdefault(k, []).append(v)
+                    losses.setdefault(k, []).append(float(v))
                 losses.setdefault("total", []).append(loss.item())
 
                 if eval_iter is not None:
@@ -97,7 +98,7 @@ def simple_train(
                         _eval_loss = eval_result
                         eval_metrics = {}
                     for k, v in eval_metrics.items():
-                        losses.setdefault(f"eval_{k}", []).append(v)
+                        losses.setdefault(f"eval_{k}", []).append(float(v))
 
                 train_helpers.log_batch(start_time, cur_epoch, cur_batch_num, epochs, skip + len(train_dataloader), losses, global_step=global_step, max_steps=max_steps)
             if (cur_batch_num + 1) % batches_per_save == 0:

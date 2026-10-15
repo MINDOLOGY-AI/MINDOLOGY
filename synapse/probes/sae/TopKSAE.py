@@ -6,11 +6,16 @@
 # activations are scaled by norm_factor (set by the trainer so the mean L2 norm is sqrt(d_in)); encode/decode
 # take and return activations in the model's own scale.
 # limited decoder: the top-k is kept as (vals, idx) and decoding sums only those k decoder rows (embedding_bag),
-# never a dense (N, d_sae) feature vector.
+# never a dense (N, d_sae) feature vector. training decodes with a triton embedding_bag (embedding_bag_triton.py, ~2.7x
+# faster backward); decode() keeps torch's, which also runs on cpu.
+# compute_loss never syncs with the cpu (no .item(), no boolean-mask indexing, no data-dependent shapes), so the
+# training loop can queue kernels ahead of the gpu; metrics come back as 0-dim gpu tensors.
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from synapse.probes.sae.embedding_bag_triton import embedding_bag
 
 
 class TopKSAE(nn.Module):
@@ -61,37 +66,35 @@ class TopKSAE(nn.Module):
         # (N, k), (N, k)
         vals, idx = torch.topk(pre, self.k, dim=-1)
         # (N, k) -> (N, d_in), scaled space
-        x_hat = F.embedding_bag(idx, self.W_dec, per_sample_weights=vals, mode="sum") + self.b_dec
+        x_hat = embedding_bag(idx, self.W_dec, vals) + self.b_dec
         recon_loss = (x_hat - x).pow(2).sum(-1).mean()
 
         # dead-feature bookkeeping
-        # (d_sae,) features with a positive value on any token of the batch
-        fired = torch.zeros(self.d_sae, dtype=torch.bool, device=x.device)
-        fired[idx[vals > 0]] = True
         with torch.no_grad():
+            # (d_sae,) features with a positive value on any token of the batch
+            fired = torch.zeros(self.d_sae, device=x.device).scatter_reduce_(0, idx.flatten(), (vals > 0).flatten().float(), "amax") > 0
             self.tokens_since_fired += x.shape[0]
-            self.tokens_since_fired[fired] = 0
+            self.tokens_since_fired.masked_fill_(fired, 0)
         # (d_sae,)
         dead = self.tokens_since_fired > self.dead_tokens
 
-        # AuxK: dead features reconstruct the residual through their own top-k
-        aux_loss = x.new_zeros(())
-        n_dead = int(dead.sum())
-        if n_dead > 0:
-            # (N, d_in)
-            residual = (x - x_hat).detach()
-            # (N, d_sae) with live features zeroed
-            pre_dead = torch.where(dead.unsqueeze(0), pre, torch.zeros_like(pre))
-            # (N, min(aux_k, n_dead)), (N, min(aux_k, n_dead))
-            aux_vals, aux_idx = torch.topk(pre_dead, min(self.aux_k, n_dead), dim=-1)
-            # (N, aux) -> (N, d_in)
-            aux_recon = F.embedding_bag(aux_idx, self.W_dec, per_sample_weights=aux_vals, mode="sum")
-            aux_loss = self.aux_coeff * (aux_recon - residual).pow(2).sum(-1).mean()
+        # AuxK: dead features reconstruct the residual through their own top aux_k. always the full aux_k with live
+        # features zeroed: past the dead ones the top-k picks zeros, which add nothing and get no gradient, so this
+        # equals a top-min(aux_k, n_dead) without reading n_dead on the cpu; with nothing dead the loss is masked to 0
+        # (N, d_in)
+        residual = (x - x_hat).detach()
+        # (N, d_sae) with live features zeroed
+        pre_dead = torch.where(dead.unsqueeze(0), pre, torch.zeros_like(pre))
+        # (N, aux_k), (N, aux_k)
+        aux_vals, aux_idx = torch.topk(pre_dead, self.aux_k, dim=-1)
+        # (N, aux_k) -> (N, d_in)
+        aux_recon = embedding_bag(aux_idx, self.W_dec, aux_vals)
+        aux_loss = self.aux_coeff * (aux_recon - residual).pow(2).sum(-1).mean() * dead.any()
 
         metrics = {
-            "recon_err_pct": (recon_loss / x.pow(2).sum(-1).mean() * 100).item(),
-            "l0": (vals > 0).float().sum(-1).mean().item(),
-            "dead_frac": n_dead / self.d_sae,
-            "aux": aux_loss.item(),
+            "recon_err_pct": (recon_loss / x.pow(2).sum(-1).mean() * 100).detach(),
+            "l0": (vals > 0).float().sum(-1).mean(),
+            "dead_frac": dead.float().mean(),
+            "aux": aux_loss.detach(),
         }
         return recon_loss + aux_loss, metrics

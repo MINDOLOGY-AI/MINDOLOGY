@@ -72,7 +72,8 @@ def train_group(lm, layers, expansion, train_ds, test_ds, train_tokens, batch_ch
     # checkpoints go to a per-group dir: simple_train deletes other .pt files in its save dir
     group_dir = weights_dir / f"group_L{layers[0]}-L{layers[-1]}"
     group_dir.mkdir(parents=True, exist_ok=True)
-    opt = torch.optim.Adam(trainer.parameters(), lr=LR)
+    # fused: one kernel for every parameter, no per-parameter step.item() sync (same Adam math)
+    opt = torch.optim.Adam(trainer.parameters(), lr=LR, fused=True)
     max_steps = train_tokens // (batch_chunks * chunk_size)
     decay_start = int(max_steps * (1 - LR_DECAY_FRAC))
     # lr multiplier per step: 1 until decay_start, then linear down to 0 at max_steps
