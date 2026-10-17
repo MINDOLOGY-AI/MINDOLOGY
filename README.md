@@ -28,3 +28,11 @@ one major problem in current mech interp research is you try different methods, 
 we will build a querieble vector database of like say we click an activation, we see it's direct labelling via k++, we see it's SAE decomposition and labeling, etc.  
 
 all visually routed through a general 
+
+## interpviz
+
+![detect](interpviz/screenshots/detect_frankenstein.png)
+*Qwen3.5-4B reading "Mary Shelley wrote a famous novel called": every layer × token cell shows the strongest crosscoder feature. A "monsters, vampires, horror" feature fires before the model predicts "Frank…".*
+
+![steer](interpviz/screenshots/steer_frankenstein.png)
+*Turning that one feature up on "Once upon a time, there was a" changes the story from "a young adventurer named Tom" to "Frankenstein's monster… created by a scientist".*
