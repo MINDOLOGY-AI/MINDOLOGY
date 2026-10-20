@@ -6,6 +6,9 @@
 #   python -m evoke.Qwen3_5_4b.interp.sae_resid_topk gpu     train + core eval + picks (the gpu box)
 #   python -m evoke.Qwen3_5_4b.interp.sae_resid_topk label   labels + scores + summary (api-bound: any machine with the
 #                                                              repo, the picks and the tokenized eval.bin)
+#   python -m evoke.Qwen3_5_4b.interp.sae_resid_topk label 0/4   labels only layers 0, 4, 8, ... (one process is cpu-bound
+#                                                              at ~13 labels/s: run shards 0/4 .. 3/4 side by side, then
+#                                                              plain `label` for the summary)
 # outputs: weights/evoke/Qwen3_5_4b/sae_resid_topk/L<i>.pt
 #          results/Qwen3_5_4b/sae_resid_topk/{core.json, density/, picks/, labels/, autointerp.json, summary.md}
 
@@ -151,9 +154,10 @@ def evaluate_core(lm, saes, layers, eval_ds, n_batches, batch_chunks):
 
 def main(phase, layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train_tokens=TRAIN_TOKENS, batch_chunks=BATCH_CHUNKS,
          eval_batches=EVAL_BATCHES, eval_batch_chunks=EVAL_BATCH_CHUNKS, pick_chunks=PICK_CHUNKS, label_limit=None,
-         weights_dir=WEIGHTS_DIR, results_dir=RESULTS_DIR):
+         weights_dir=WEIGHTS_DIR, results_dir=RESULTS_DIR, shard=None):
     # phase: "gpu" = train + core eval + picks, "label" = labels + scores + summary
     # label_limit: label only the first n units per layer (None = every unit); for smoke tests
+    # shard: "i/n" = the label phase labels only layers[i::n] and skips the summary (None = every layer + summary)
     assert phase in ("gpu", "label"), f"phase must be gpu or label, got {phase!r}"
     torch.backends.cuda.matmul.allow_tf32 = True  # tf32 matmuls: ~2x faster SAE training, standard for SAE training
     torch.manual_seed(SEED)
@@ -219,10 +223,20 @@ def main(phase, layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train
     # phase == "label"
     tokenizer = load_qwen3_5_tokenizer()
     # --- phase 3: label + score every feature (resumes from the jsonl files) ---
-    units = {names[i]: list(range(label_limit)) for i in layers} if label_limit else None
-    n_failed = asyncio.run(label_units(picks_dir, labels_dir, tokenizer, MODEL, [names[i] for i in layers], workers=WORKERS,
+    # [layer] the layers this process labels
+    label_layers = layers
+    if shard is not None:
+        si, sn = map(int, shard.split("/"))
+        assert 0 <= si < sn, f"shard must be i/n with 0 <= i < n, got {shard!r}"
+        label_layers = layers[si::sn]
+    units = {names[i]: list(range(label_limit)) for i in label_layers} if label_limit else None
+    n_failed = asyncio.run(label_units(picks_dir, labels_dir, tokenizer, MODEL, [names[i] for i in label_layers], workers=WORKERS,
                                        units=units, unit_word="feature"))
+    # shards share errors.json (the last to finish writes it): the plain `label` run afterwards rewrites it for every layer
     assert n_failed == 0, f"{n_failed} units failed labeling, see {labels_dir / 'errors.json'}; rerun to retry them"
+    if shard is not None:
+        print(f"shard {shard} done (layers {label_layers}); after every shard: plain `label` for the summary", flush=True)
+        return
 
     # --- summary ---
     pm = json.loads((picks_dir / "meta.json").read_text())
@@ -255,4 +269,4 @@ def main(phase, layers=LAYERS, group_size=GROUP_SIZE, expansion=EXPANSION, train
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], shard=sys.argv[2] if len(sys.argv) > 2 else None)
