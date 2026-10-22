@@ -95,6 +95,8 @@ outputs:
 - `weights/evoke/Qwen3_5_4b/sae_resid_topk/L<i>.pt`  
 - `results/Qwen3_5_4b/sae_resid_topk/`: `core.json` (`ce_clean`; per layer ce_sae, recon_err_pct, ce_increase_pct, l0, dead_frac_train, density_hist), `density/L<i>.density.bin` `(D,) float64`, `picks/`, `labels/`, `autointerp.json`, `summary.md`  
 
+Qwen3.5-4B result (all 32 layers, `results/Qwen3_5_4b/sae_resid_topk/summary.md`): recon err 2.3% (L0), 10–17% (L2–L31); CE increase +0.4% (L0), +1.2–2.5% (L1–L19), rising to +6.2% (L30) and +13.2% (L31); never fired on eval 0–2% for most layers, peak 7–11% at L17–L20. autointerp mean 0.74 (L0), 0.77–0.80 (L1–L31), overall 0.78; ≥0.7: 59% (L0), 68–77% elsewhere. vs the WCC (`results/Qwen3_5_4b/wcc_resid_jumprelu/`): autointerp 0.78 vs 0.70 overall (WCC 0.56–0.66 at L12–L16 and L28–L31), CE increase lower at L0–L7 and L24–L31, slightly higher at L8–L17. labeling 1.31M features: 8 label shards on a laptop, ~81 labels/s, 59 failed (empty output after 12 retries) and succeeded on the rerun.  
+
 OLMo-2-1B results (same recipe with D = 2048, all 16 layers, `results/OlMo2_1b/`):  
 result, 1B-token L8 (`results/OlMo2_1b/sae_resid_topk_1bTok/compare_L8/`, same eval batches as the 100M L8): recon err 18.3% vs 19.4%, CE increase +2.8% vs +3.5%, density within 10× of ideal 73% vs 68%, rare (<ideal/10) 26% vs 31%, never fired on eval 1.6% vs 0.3%.  
 result, 100M-token run (all 16 layers, constant lr, `results/OlMo2_1b/sae_resid_topk/`): recon err 13% (L0), 18–20% (L1–L12), 22–25% (L13–L15); CE increase +3–5% (L0–L11), rising to +19% at L15; ~0 dead. autointerp mean 0.65 (L0) → 0.72 (L2) → 0.75–0.77 (L3–L15), ≥0.7: 38% (L0) → 61–69% (L3–L15); vs MLP neurons 0.54.  
