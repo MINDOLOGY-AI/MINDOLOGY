@@ -43,7 +43,8 @@ def create_causal_mask(
         mask_4d = attention_mask[:, None, None, :].to(dtype)
         # invert: 0 (pad) -> -inf, 1 (real) -> 0
         # use where/masked_fill so 1.0 * -inf does not become NaN
-        padding_mask = torch.where(mask_4d == 1.0, 0.0, float('-inf'))
+        # python-scalar where() returns float32: cast back so a bf16 / fp16 mask stays in the query's dtype (cuda sdpa)
+        padding_mask = torch.where(mask_4d == 1.0, 0.0, float('-inf')).to(dtype)
         causal_mask = causal_mask + padding_mask
 
     return causal_mask
