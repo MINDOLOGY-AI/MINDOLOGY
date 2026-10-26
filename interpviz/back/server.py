@@ -1,10 +1,13 @@
 # server.py -- FastAPI WebSocket server, handles all frontend messages
 # single websocket at /ws, message protocol: {type, _id, ...} -> {type, _id, ...}
 # every open window is a frontend of the same state (model, meta, session): a run / preset change is pushed to the other
-# windows (no _id), a (re)load or device change tells them to fetch the state again (interpviz/DOC.md, session)
+# windows (no _id), a (re)load or device change tells them to fetch the state again (interpviz/DOC.md, session).
+# requests run one at a time in a worker thread (the event loop stays free to stream a chat reply to every window);
+# every outgoing message goes through one queue, so each window gets them in order
 # static files served from front/
 # launched by interpviz/app.py
 
+import asyncio
 import copy
 import importlib
 import json
@@ -69,6 +72,11 @@ clients = set()  # {WebSocket}
 SHARED = ("sae_run", "save_preset", "delete_preset")
 # replies after which the other windows fetch the whole state again (get_state)
 RELOAD = ("load_meta", "load_model", "set_device")
+# one request at a time: handle() owns the globals and the model
+busy = asyncio.Lock()
+# [(targets: {WebSocket} | None = every window, message)] everything sent, in order, by the send_loop task
+outbox = asyncio.Queue()
+send_task = None
 
 
 def sae_model():
@@ -196,7 +204,8 @@ def _build_display():
     return display_nodes, display_edges
 
 
-def handle(msg):
+def handle(msg, emit):
+    # emit(message): send to every window now (from the worker thread), e.g. a chat reply as it is generated
     global inspector, meta, meta_folder, raw_graph, device, probes, cpu_fp32_model
     t = msg["type"]
 
@@ -390,7 +399,10 @@ def handle(msg):
 
     elif t == "sae_run":
         assert inspector and probes, "load a model with a tokenizer first"
-        return {"type": t, **probes.run(sae_model(), msg["set"], msg["text"], msg["template"], msg["n_generate"], msg["edits"])}
+        # every window shows the reply growing: {"type": "chat_stream", "messages": the conversation so far, "raw", "think", "reply": str}
+        on_reply = lambda r: emit({"type": "chat_stream", "messages": msg["messages"], "raw": msg["raw"], "think": msg["think"], "reply": r})
+        return {"type": t, **probes.run(sae_model(), msg["set"], msg["messages"], msg["raw"], msg["think"], msg["max_new"],
+                                        msg["edits"], on_reply)}
 
     elif t == "sae_neuron":
         assert probes, "load a model with a tokenizer first"
@@ -441,30 +453,43 @@ async def ws(websocket: WebSocket):
         await websocket.close(code=1008)
         return
 
+    global send_task
     await websocket.accept()
     clients.add(websocket)
+    if send_task is None:
+        send_task = asyncio.create_task(send_loop())
+    loop = asyncio.get_running_loop()
+    emit = lambda m: loop.call_soon_threadsafe(outbox.put_nowait, (None, m))
     try:
         while True:
             msg = await websocket.receive_json()
             _id = msg.get("_id")
-            try:
-                response = handle(msg)
-            except Exception as e:
-                traceback.print_exc()
-                response = {"type": "error", "message": str(e)}
+            async with busy:
+                try:
+                    response = await asyncio.to_thread(handle, msg, emit)
+                except Exception as e:
+                    traceback.print_exc()
+                    response = {"type": "error", "message": str(e)}
             # the other windows: the same reply without _id, or a nudge to fetch the state again
             push = response if response["type"] in SHARED else {"type": "reload"} if response["type"] in RELOAD else None
-            if _id is not None:
-                response["_id"] = _id
-            await websocket.send_json(response)
+            outbox.put_nowait(({websocket}, response if _id is None else {**response, "_id": _id}))
             if push is not None:
-                push = {k: v for k, v in push.items() if k != "_id"}
-                for c in clients - {websocket}:
-                    await c.send_json(push)
+                outbox.put_nowait((clients - {websocket}, push))
     except WebSocketDisconnect:
         pass
     finally:
         clients.discard(websocket)
+
+
+async def send_loop():
+    # sends the outbox in order; a window that closed meanwhile is skipped
+    while True:
+        targets, m = await outbox.get()
+        for c in list(clients if targets is None else targets & clients):
+            try:
+                await c.send_json(m)
+            except (WebSocketDisconnect, RuntimeError):
+                clients.discard(c)
 
 
 # frontend statics at /

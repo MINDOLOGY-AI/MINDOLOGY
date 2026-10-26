@@ -1,6 +1,7 @@
-// session.js -- the session every tab and every open window shares (interpviz/DOC.md, session): one prompt, one edits
-// list, one last run, held by the server. the chat bar (method, prompt, run / generate, output) and the edit chips sit
-// above both tabs; a run from any window is pushed to the others, which redraw from it.
+// session.js -- the session every tab and every open window shares (interpviz/DOC.md, session): one conversation, one
+// edits list, one last run, held by the server. the chat popup (bottom left: method, think / raw, max reply tokens, the
+// messages, input) and the edit chips (top) show on both tabs; a reply streams into every window as it is generated,
+// then the run is pushed to all, which redraw from it.
 // edit panel (graph tab, "edits" button): look a neuron up by layer + number (its value per token of the run, the tokens
 // its write pushes the logits toward / away from) and set it at one token or all; every edit of the session; presets =
 // named edit lists saved in the meta, loaded onto any prompt.
@@ -9,14 +10,15 @@
 //   {kind: "steer",   set, part, pos, id, value, label}  add value × the latent's write (a crosscoder: into every layer it writes to)
 //   {kind: "neuron",  layer, unit, pos, value}           set an mlp neuron to value
 //   {kind: "neuron_add", layer, unit, pos, value}        add value to an mlp neuron (= value × its write)
-// pos = a token index or "all" (every token, generated ones included). a new prompt keeps only the "all" edits; another
-// method keeps only the neuron edits and that method's latents.
+// pos = a token index or "all" (every token, generated ones included). a token edit lasts while its token does (the
+// server drops it when the new conversation changes that token); another method keeps only the neuron edits and that
+// method's latents. an edit change regenerates the last reply.
 
 // static circular import — safe for function declarations (see nodes.js)
 import { send, showError, status } from "./main.js";
 
-// {query: {set, text, template, n_generate}, edits: [edit], run: {tokens, n_prompt, output, next, hooks}} or null before
-// the first run
+// {query: {set, messages: [{role, content}] (ending with the reply), raw, think, max_new}, edits: [edit],
+// run: {tokens, n_prompt, next, hooks}} or null before the first run
 export let session = null;
 // {name: [edit]} the meta's presets
 let presets = {};
@@ -27,6 +29,11 @@ let neuron = null;
 let neuronCard = null;
 
 const setSelect = document.getElementById("sae-set");
+const log = document.getElementById("chat-log");
+// true after "new": the next message starts a conversation (the server's session still holds the old one)
+let fresh = false;
+// a request of this window is running (the send / regenerate buttons wait)
+let busy = false;
 const panel = document.getElementById("edit-panel");
 
 // token text with visible whitespace
@@ -54,17 +61,63 @@ export function setPresets(p) {
     renderPanel();
 }
 
-// show a session from the server (this window's run, another window's push, or get_state): the chat bar follows it
+// one chat bubble; an assistant message's thinking (before </think>) folds into a "thinking" block, open while the
+// reply is still thinking
+function bubble(role, content, think, streaming) {
+    const b = document.createElement("div");
+    b.className = `chat-msg ${role}` + (streaming ? " streaming" : "");
+    let answer = content;
+    if (role === "assistant" && think) {
+        const done = content.includes("</think>");
+        const det = document.createElement("details");
+        det.open = !done;
+        const sum = document.createElement("summary");
+        sum.textContent = done ? "thinking" : "thinking...";
+        const body = document.createElement("div");
+        body.className = "chat-think";
+        body.textContent = content.split("</think>")[0].replace(/^\s*<think>/, "").trim();
+        det.append(sum, body);
+        b.appendChild(det);
+        answer = done ? content.split("</think>").slice(1).join("</think>").trim() : "";
+    }
+    const text = document.createElement("div");
+    text.textContent = answer;
+    b.appendChild(text);
+    log.appendChild(b);
+}
+
+// the conversation, plus the reply being generated (reply: str | null)
+function renderLog(messages, think, raw, reply) {
+    log.innerHTML = "";
+    log.classList.toggle("raw", raw);
+    if (!messages.length) {
+        log.textContent = "new chat";
+        return;
+    }
+    for (const m of messages) bubble(m.role, m.content, think, false);
+    if (reply !== null) bubble("assistant", reply, think, true);
+    log.scrollTop = log.scrollHeight;
+}
+
+// a reply as it is generated (server.py chat_stream, sent to every window)
+export function showStream(m) {
+    fresh = false;
+    renderLog(m.messages, m.think, m.raw, m.reply);
+}
+
+// show a session from the server (this window's run, another window's push, or get_state): the chat follows it
 export function applySession(s) {
     const prev = session;
     session = s;
     if (s) {
+        fresh = false;
         setSelect.value = s.query.set ?? "none";
-        document.getElementById("sae-text").value = s.query.text;
-        document.getElementById("sae-template").checked = s.query.template;
-        document.getElementById("sae-output").value = s.run.output.replace(/\n/g, "↵");
+        document.getElementById("chat-think").checked = s.query.think;
+        document.getElementById("chat-raw").checked = s.query.raw;
+        document.getElementById("chat-max").value = s.query.max_new;
+        renderLog(s.query.messages, s.query.think, s.query.raw, null);
     } else {
-        document.getElementById("sae-output").value = "";
+        renderLog([], false, false, null);
     }
     renderChips();
     listeners.forEach(fn => fn(prev, s));
@@ -73,39 +126,56 @@ export function applySession(s) {
     else renderPanel();
 }
 
-// one run: the query (missing fields from the chat bar) with edits (default: the session's, minus the ones the new
-// prompt / method can't keep)
-async function run(query, edits) {
+// one run of messages (a reply is generated when the last one is the user's) with the popup's settings and edits
+// (default: the session's, minus the ones the new conversation / method can't keep)
+async function run(messages, edits) {
+    if (busy) { status("wait for the reply"); return; }
     const q = {
         set: setSelect.value === "none" ? null : setSelect.value,
-        text: document.getElementById("sae-text").value,
-        template: document.getElementById("sae-template").checked,
-        n_generate: 0,
-        ...query,
+        messages,
+        raw: document.getElementById("chat-raw").checked,
+        think: document.getElementById("chat-think").checked,
+        max_new: parseInt(document.getElementById("chat-max").value, 10),
     };
+    if (!(q.max_new > 0)) { status("max reply tokens: type a number"); return; }
     if (edits === undefined) {
-        edits = session ? session.edits : [];
-        // token positions point into one prompt
-        if (session && (session.query.text !== q.text || session.query.template !== q.template)) edits = edits.filter(e => e.pos === "all");
-        // latents belong to one method
-        edits = edits.filter(e => isNeuron(e) || e.set === q.set);
+        // latents belong to one method (token edits whose tokens changed: the server drops them)
+        edits = (session ? session.edits : []).filter(e => isNeuron(e) || e.set === q.set);
     }
-    status(q.n_generate ? `generating ${q.n_generate}...` : "running...");
+    busy = true;
+    renderLog(messages, q.think, q.raw, messages[messages.length - 1].role === "user" ? "" : null);
+    status(q.set ? `reading ${q.set}...` : "");
     let s;
     try {
         s = await send("sae_run", { ...q, edits });
     } catch (err) {
         showError(err);
         return;
+    } finally {
+        busy = false;
     }
     status("");
     applySession({ query: s.query, edits: s.edits, run: s.run });
 }
 
-// rerun the session's prompt with new edits
+// the session's conversation without its last reply: what regenerating answers again
+function withoutReply() {
+    const m = session.query.messages;
+    return m[m.length - 1].role === "assistant" ? m.slice(0, -1) : m;
+}
+
+// new edits: regenerate the last reply with them
 export function setEdits(edits) {
-    if (!session) { status("run a prompt first"); return; }
-    run(session.query, edits);
+    if (!session) { status("send a message first"); return; }
+    run(withoutReply(), edits);
+}
+
+function sendMessage() {
+    const input = document.getElementById("chat-input");
+    if (!input.value.trim()) return;
+    const old = session && !fresh ? session.query.messages : [];
+    run([...old, { role: "user", content: input.value }]);
+    input.value = "";
 }
 
 export const isNeuron = e => e.kind === "neuron" || e.kind === "neuron_add";
@@ -387,15 +457,28 @@ export function hideEditPanel() {
 }
 
 export function initSession() {
-    document.getElementById("btn-sae-run").addEventListener("click", () => run({}));
-    document.getElementById("btn-sae-generate").addEventListener("click", () => {
-        const n = parseInt(document.getElementById("sae-n").value, 10);
-        if (!(n >= 0)) { status("generate: type a number of tokens"); return; }
-        run({ n_generate: n });
+    const input = document.getElementById("chat-input");
+    input.addEventListener("keydown", ev => {
+        if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendMessage(); }
     });
-    // another method: rerun the session's prompt with it (only its latents' edits and the neuron edits survive)
+    document.getElementById("chat-send").addEventListener("click", sendMessage);
+    document.getElementById("chat-regen").addEventListener("click", () => {
+        if (session) run(withoutReply());
+    });
+    document.getElementById("chat-new").addEventListener("click", () => {
+        fresh = true;
+        renderLog([], false, false, null);
+    });
+    const chat = document.getElementById("chat"), open = document.getElementById("chat-open");
+    document.getElementById("chat-min").addEventListener("click", () => { chat.style.display = "none"; open.style.display = ""; });
+    open.addEventListener("click", () => { chat.style.display = ""; open.style.display = "none"; });
+    // another method: the same conversation read by it (only its latents' edits and the neuron edits survive; if
+    // latent edits were dropped, the last reply is regenerated without them)
     setSelect.addEventListener("change", () => {
-        if (session) run({ ...session.query, set: setSelect.value === "none" ? null : setSelect.value });
+        if (!session || fresh) return;
+        const set = setSelect.value === "none" ? null : setSelect.value;
+        const kept = session.edits.filter(e => isNeuron(e) || e.set === set);
+        run(kept.length === session.edits.length ? session.query.messages : withoutReply(), kept);
     });
     document.getElementById("btn-edits").addEventListener("click", () => {
         panel.style.display = panel.style.display === "none" ? "" : "none";

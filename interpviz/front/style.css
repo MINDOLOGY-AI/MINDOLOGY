@@ -442,13 +442,7 @@ header h1 {
     border-bottom: 1px solid var(--border);
 }
 
-/* chat bar + edit chips: the shared session, above both tabs */
-#chatbar {
-    background: var(--surface);
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--border);
-}
-
+/* edit chips: the shared session's edits, above both tabs */
 #editbar {
     background: var(--surface);
     padding: 0 16px;
@@ -491,14 +485,6 @@ header h1 {
     white-space: nowrap;
 }
 
-#sae-text {
-    width: 480px;
-}
-
-#sae-n {
-    width: 56px;
-}
-
 #sae-attr-info {
     font-size: 12px;
     color: var(--dim);
@@ -516,13 +502,6 @@ header h1 {
     background: var(--attr-pos);
     border-color: var(--attr-pos);
     color: var(--background);
-}
-
-/* generated text: one line, scrolls horizontally */
-#sae-output {
-    flex: 1;
-    min-width: 200px;
-    color: var(--lavender);
 }
 
 /* ---- sae tab ---- */
@@ -837,4 +816,112 @@ header h1 {
 .preset-name {
     flex: 1;
     color: var(--white);
+}
+
+/* chat popup (bottom left, both tabs): the session's conversation */
+#chat {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    width: 420px;
+    height: 520px;
+    max-height: calc(100vh - 120px);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    z-index: 50;
+}
+
+#chat-head {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: nowrap;
+}
+
+#chat-head select {
+    min-width: 0;
+    flex: 1;
+}
+
+#chat-max {
+    width: 60px;
+}
+
+#chat-min {
+    margin-left: auto;
+}
+
+.chat-title {
+    color: var(--accent);
+    font-size: 12px;
+}
+
+#chat-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--dim);
+}
+
+.chat-msg {
+    max-width: 85%;
+    padding: 6px 10px;
+    border-radius: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--white);
+}
+
+.chat-msg.user {
+    align-self: flex-end;
+    background: var(--background);
+    border: 1px solid var(--border);
+}
+
+.chat-msg.assistant {
+    align-self: flex-start;
+    border: 1px solid var(--lavender);
+    color: var(--lavender);
+}
+
+/* the reply still being generated */
+.chat-msg.streaming::after {
+    content: "▍";
+    color: var(--dim);
+}
+
+.chat-msg summary {
+    cursor: pointer;
+    color: var(--dim);
+}
+
+.chat-think {
+    color: var(--dim);
+    margin: 4px 0;
+}
+
+#chat-foot {
+    padding: 6px 8px;
+    border-top: 1px solid var(--border);
+    flex-wrap: nowrap;
+}
+
+#chat-input {
+    flex: 1;
+    white-space: pre-wrap;
+    overflow-y: auto;
+}
+
+#chat-open {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    z-index: 50;
 }

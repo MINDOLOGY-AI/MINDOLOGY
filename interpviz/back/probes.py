@@ -46,8 +46,8 @@ class Probes:
         self.saes = {}
         # (1, T) token ids of the last run (prompt + generated), what attribute and neuron explain
         self.ids = None
-        # the session (interpviz/DOC.md, session): the last run's request {"set": str | None, "text", "template",
-        # "n_generate"}, its edits [edit] (wire format) and its reply {tokens, n_prompt, output, next, hooks}
+        # the session (interpviz/DOC.md, session): the last run's request {"set": str | None, "messages" (with the reply),
+        # "raw", "think", "max_new"}, its edits [edit] (wire format) and its reply {tokens, n_prompt, next, hooks}
         self.query = None
         self.edits = []
         self.last = None
@@ -83,10 +83,15 @@ class Probes:
                 out += [{"kind": "add", "point": point, "pos": pos, "vec": e["value"] * v} for point, v in self.hook_set.writes(e["part"], e["id"])]
         return out
 
-    def run(self, model, set_name, text, template, n_generate, edits):
-        # text -> tokens (+ n_generate greedy tokens) -> one forward capturing every read point of hook set set_name
-        # (None: no hook set, tokens and next-token guesses only). edits: [edit] wire format (interpviz/DOC.md, session)
-        # -> the new session {query, edits, run}
+    def run(self, model, set_name, messages, raw, think, max_new, edits, on_reply=None):
+        # a conversation -> tokens (+ the model's greedy reply, up to max_new tokens, when the last message is the
+        # user's) -> one forward capturing every read point of hook set set_name (None: no hook set, tokens and
+        # next-token guesses only). edits: [edit] wire format (interpviz/DOC.md, session)
+        # messages: [{"role": "user" | "assistant", "content": str}]; raw: the contents joined as plain text (the reply
+        # continues it), else qwen's chat template, think: its thinking block (off: an empty one)
+        # on_reply(str): called with the reply so far after every generated token (streaming)
+        # -> the new session {query, edits, run}; query.messages ends with the reply
+        assert messages and all(m["role"] in ("user", "assistant") for m in messages), "messages: [{role: user | assistant, content}]"
         assert set_name is None or set_name in self.files, f"no hook set {set_name!r} in interpvizMeta.json hooks, have {list(self.files)}"
         if set_name is not None and (self.hook_set is None or self.hook_set.name != set_name):
             # drop the old set's GBs before loading the next
@@ -94,27 +99,41 @@ class Probes:
             self.saes = {}
             self.hook_set = HookSet(self.folder / self.files[set_name])
             self.saes = {(self.hook_set.name, pn): (part["reads"], part["probe"]) for pn, part in self.hook_set.parts.items()}
-        resolved = self.resolve(edits)
         tok = self.tokenizer
         device = next(model.parameters()).device
-        if template:
-            # the chat template starts with bos itself
-            prompt = tok.apply_chat_template([{"role": "user", "content": text}], add_generation_prompt=True,
-                                             tokenize=True, return_dict=True)["input_ids"]
-        else:
+        reply = messages[-1]["role"] == "user" and max_new > 0
+        if raw:
             # models without a bos token (qwen) start straight with the text
-            prompt = ([tok.bos_token_id] if tok.bos_token_id is not None else []) + tok.encode(text)
+            prompt = ([tok.bos_token_id] if tok.bos_token_id is not None else []) + tok.encode("".join(m["content"] for m in messages))
+        else:
+            # the chat template starts with bos itself; enable_thinking=False writes an empty <think></think>
+            prompt = tok.apply_chat_template(messages, add_generation_prompt=messages[-1]["role"] == "user", enable_thinking=think,
+                                             tokenize=True, return_dict=True)["input_ids"]
+        # a token edit survives where its token is the last run's (the tokens before it unchanged too), or is still to
+        # be generated after an unchanged prompt (a regenerated reply). e.g. a new turn: qwen's template drops the
+        # empty think block of earlier replies, so their tokens move and their edits go
+        old = self.ids[0].tolist() if self.ids is not None else []  # [int]
+        # length of the prefix the new prompt shares with the last run's tokens
+        common = next((i for i, (a, b) in enumerate(zip(old, prompt)) if a != b), min(len(old), len(prompt)))
+        edits = [e for e in edits if e["pos"] == "all" or e["pos"] < common or (common == len(prompt) and e["pos"] >= len(prompt))]
+        resolved = self.resolve(edits)
         # (1, T) token ids, grown by greedy generation
         ids = torch.tensor([prompt], device=device)
         special_ids = set(tok.all_special_ids)  # {int}
         with torch.no_grad(), edited(model, self.saes, resolved):
-            for _ in range(n_generate):
+            for _ in range(max_new if reply else 0):
                 # (1, T, V) -> (1, 1)
                 nxt = model(ids)[:, -1].argmax(-1, keepdim=True)
                 ids = torch.cat([ids, nxt], dim=1)
                 # any special token ends it (qwen: <|im_end|> after a chat turn, <|endoftext|> after plain text)
                 if nxt.item() in special_ids:
                     break
+                if on_reply:
+                    on_reply(tok.decode(ids[0, len(prompt):].tolist()))
+        if reply:
+            # the reply without its closing special token
+            gen = [i for i in ids[0, len(prompt):].tolist() if i not in special_ids]
+            messages = [*messages, {"role": "assistant", "content": tok.decode(gen)}]
 
         # {read point: (T, d) float32 cpu} filled by forward hooks on the read points' modules. the edit hooks go in
         # first, so the capture hooks (run after them) see the edited activations
@@ -142,13 +161,11 @@ class Probes:
         self.ids = ids
         # (T, V) -> (T, N_NEXT)
         probs, nxt = logits[0].float().softmax(-1).topk(N_NEXT, dim=-1)
-        self.query = {"set": set_name, "text": text, "template": template, "n_generate": n_generate}
+        self.query = {"set": set_name, "messages": messages, "raw": raw, "think": think, "max_new": max_new}
         self.edits = edits
         self.last = {
             "tokens": [tok.decode([i]) for i in ids[0].tolist()],
             "n_prompt": len(prompt),
-            # the generated continuation as text
-            "output": tok.decode(ids[0, len(prompt):].tolist()),
             "next": [[[tok.decode([i]), round(p, 3)] for i, p in zip(ir, pr)] for ir, pr in zip(nxt.tolist(), probs.tolist())],
             "hooks": {} if set_name is None else {self.hook_set.name: {
                 "display": self.hook_set.display, "editable": self.hook_set.editable, "parts": self.hook_set.encode(captured)}},

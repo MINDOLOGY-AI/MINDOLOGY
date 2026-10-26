@@ -1,7 +1,7 @@
 # api.py -- the probes tab from python: no server, browser or graph trace (see interpviz/DOC.md, api).
 # run from repo root, e.g.
 #   iv = Interp("interpviz/models/qwen3_5_4b", "wcc_resid_jumprelu")
-#   r = iv.run("The Eiffel Tower is in the city of")              # = the sae_run reply's "run"
+#   r = iv.run("The Eiffel Tower is in the city of")              # = the sae_run reply's "run" + "reply"
 #   a = iv.probes.attribute(iv.model, len(r["tokens"]) - 1)        # sae_attribute
 #   c = iv.probes.feature(iv.model, iv.set, "L12", 4242)           # sae_feature (sae_search, sae_neuron likewise)
 #   e = [{"kind": "feature", "set": iv.set, "part": "L12", "pos": 9, "id": 4242, "value": 0.0}]   # edits: interpviz/DOC.md, session
@@ -31,9 +31,11 @@ class Interp:
         self.probes = Probes(meta, REPO_ROOT / folder)
         self.set = set_name
 
-    def run(self, text, edits=(), n_generate=0, template=False):
-        # edits: [edit] wire format (interpviz/DOC.md, session) -> the sae_run reply's "run"
-        return self.probes.run(self.model, self.set, text, template, n_generate, list(edits))["run"]
+    def run(self, text, edits=(), n_generate=0, template=False, think=False):
+        # one user message (template: in qwen's chat template, else plain text) + up to n_generate reply tokens.
+        # edits: [edit] wire format (interpviz/DOC.md, session) -> {**the sae_run reply's "run", "reply": str}
+        s = self.probes.run(self.model, self.set, [{"role": "user", "content": text}], not template, think, n_generate, list(edits))
+        return {**s["run"], "reply": s["query"]["messages"][-1]["content"] if n_generate else ""}
 
     def next_logprobs(self, text, words, edits=()):
         # log prob of each word's first token as the next token after text (plain, no template), with edits applied

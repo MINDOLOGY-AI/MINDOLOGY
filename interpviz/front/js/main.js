@@ -8,7 +8,7 @@ import { initPopup, closeAllPopups } from "./popup.js";
 import { initHighlight } from "./highlight.js";
 import { initGroups, refreshGroupsPanel, hideGroupsPanel } from "./groups.js";
 import { initSae } from "./sae.js";
-import { initSession, applySession, setHookSets, setPresets, hideEditPanel } from "./session.js";
+import { initSession, applySession, showStream, setHookSets, setPresets, hideEditPanel } from "./session.js";
 
 // the <board-canvas> element — pan/zoom/grid/edges all live in the component
 const board = document.getElementById("board");
@@ -53,6 +53,7 @@ function connect() {
             fullRender();
         }
         // another window changed the shared state (server.py SHARED / RELOAD)
+        if (msg.type === "chat_stream") showStream(msg);
         if (msg.type === "sae_run") applySession({ query: msg.query, edits: msg.edits, run: msg.run });
         if (msg.type === "save_preset" || msg.type === "delete_preset") setPresets(msg.presets);
         if (msg.type === "reload") attach();
