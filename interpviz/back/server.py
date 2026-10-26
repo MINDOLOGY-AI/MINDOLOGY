@@ -11,6 +11,7 @@ import asyncio
 import copy
 import importlib
 import json
+import threading
 import traceback
 from pathlib import Path
 from urllib.parse import urlparse
@@ -77,6 +78,11 @@ busy = asyncio.Lock()
 # [(targets: {WebSocket} | None = every window, message)] everything sent, in order, by the send_loop task
 outbox = asyncio.Queue()
 send_task = None
+# set by chat_stop (any window; handled at once, not queued behind the running request): the reply being generated
+# ends after its current token
+stop_reply = threading.Event()
+# the running request tasks (kept referenced until done)
+tasks = set()  # {asyncio.Task}
 
 
 def sae_model():
@@ -400,9 +406,10 @@ def handle(msg, emit):
     elif t == "sae_run":
         assert inspector and probes, "load a model with a tokenizer first"
         # every window shows the reply growing: {"type": "chat_stream", "messages": the conversation so far, "raw", "think", "reply": str}
+        stop_reply.clear()
         on_reply = lambda r: emit({"type": "chat_stream", "messages": msg["messages"], "raw": msg["raw"], "think": msg["think"], "reply": r})
         return {"type": t, **probes.run(sae_model(), msg["set"], msg["messages"], msg["raw"], msg["think"], msg["max_new"],
-                                        msg["edits"], on_reply)}
+                                        msg["edits"], on_reply, stop_reply)}
 
     elif t == "sae_neuron":
         assert probes, "load a model with a tokenizer first"
@@ -460,21 +467,32 @@ async def ws(websocket: WebSocket):
         send_task = asyncio.create_task(send_loop())
     loop = asyncio.get_running_loop()
     emit = lambda m: loop.call_soon_threadsafe(outbox.put_nowait, (None, m))
+    async def process(msg):
+        _id = msg.get("_id")
+        # the lock queues requests in arrival order
+        async with busy:
+            try:
+                response = await asyncio.to_thread(handle, msg, emit)
+            except Exception as e:
+                traceback.print_exc()
+                response = {"type": "error", "message": str(e)}
+        # the other windows: the same reply without _id, or a nudge to fetch the state again
+        push = response if response["type"] in SHARED else {"type": "reload"} if response["type"] in RELOAD else None
+        outbox.put_nowait(({websocket}, response if _id is None else {**response, "_id": _id}))
+        if push is not None:
+            outbox.put_nowait((clients - {websocket}, push))
+
     try:
         while True:
             msg = await websocket.receive_json()
-            _id = msg.get("_id")
-            async with busy:
-                try:
-                    response = await asyncio.to_thread(handle, msg, emit)
-                except Exception as e:
-                    traceback.print_exc()
-                    response = {"type": "error", "message": str(e)}
-            # the other windows: the same reply without _id, or a nudge to fetch the state again
-            push = response if response["type"] in SHARED else {"type": "reload"} if response["type"] in RELOAD else None
-            outbox.put_nowait(({websocket}, response if _id is None else {**response, "_id": _id}))
-            if push is not None:
-                outbox.put_nowait((clients - {websocket}, push))
+            if msg["type"] == "chat_stop":
+                # at once, even from the window whose request is running: its sae_run reply follows with the reply so far
+                stop_reply.set()
+                outbox.put_nowait(({websocket}, {"type": "chat_stop", "_id": msg.get("_id")}))
+                continue
+            task = asyncio.create_task(process(msg))
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
     except WebSocketDisconnect:
         pass
     finally:

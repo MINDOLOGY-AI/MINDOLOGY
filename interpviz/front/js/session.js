@@ -144,7 +144,7 @@ async function run(messages, edits) {
     }
     busy = true;
     renderLog(messages, q.think, q.raw, messages[messages.length - 1].role === "user" ? "" : null);
-    status(q.set ? `reading ${q.set}...` : "");
+    status("Esc stops the reply");
     let s;
     try {
         s = await send("sae_run", { ...q, edits });
@@ -462,6 +462,10 @@ export function initSession() {
         if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendMessage(); }
     });
     document.getElementById("chat-send").addEventListener("click", sendMessage);
+    // Esc (any window, either tab) stops the reply being generated: it is kept as far as it got
+    document.addEventListener("keydown", ev => {
+        if (ev.key === "Escape" && log.querySelector(".streaming")) send("chat_stop").catch(showError);
+    });
     document.getElementById("chat-regen").addEventListener("click", () => {
         if (session) run(withoutReply());
     });

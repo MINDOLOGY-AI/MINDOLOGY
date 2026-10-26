@@ -83,13 +83,14 @@ class Probes:
                 out += [{"kind": "add", "point": point, "pos": pos, "vec": e["value"] * v} for point, v in self.hook_set.writes(e["part"], e["id"])]
         return out
 
-    def run(self, model, set_name, messages, raw, think, max_new, edits, on_reply=None):
+    def run(self, model, set_name, messages, raw, think, max_new, edits, on_reply=None, stop=None):
         # a conversation -> tokens (+ the model's greedy reply, up to max_new tokens, when the last message is the
         # user's) -> one forward capturing every read point of hook set set_name (None: no hook set, tokens and
         # next-token guesses only). edits: [edit] wire format (interpviz/DOC.md, session)
         # messages: [{"role": "user" | "assistant", "content": str}]; raw: the contents joined as plain text (the reply
         # continues it), else qwen's chat template, think: its thinking block (off: an empty one)
-        # on_reply(str): called with the reply so far after every generated token (streaming)
+        # on_reply(str): called with the reply so far after every generated token (streaming); stop: a threading.Event,
+        # once set the reply ends where it is (it is kept, and read like a finished one)
         # -> the new session {query, edits, run}; query.messages ends with the reply
         assert messages and all(m["role"] in ("user", "assistant") for m in messages), "messages: [{role: user | assistant, content}]"
         assert set_name is None or set_name in self.files, f"no hook set {set_name!r} in interpvizMeta.json hooks, have {list(self.files)}"
@@ -122,6 +123,8 @@ class Probes:
         special_ids = set(tok.all_special_ids)  # {int}
         with torch.no_grad(), edited(model, self.saes, resolved):
             for _ in range(max_new if reply else 0):
+                if stop is not None and stop.is_set():
+                    break
                 # (1, T, V) -> (1, 1)
                 nxt = model(ids)[:, -1].argmax(-1, keepdim=True)
                 ids = torch.cat([ids, nxt], dim=1)
