@@ -34,7 +34,7 @@ class HookSet:
         self.editable = self.kind in EDITABLE
         # {"max_features": int, "on_cell": int, "max_examples": int}
         self.display = cfg["display"]
-        # {part name: {"reads": str, "probe": nn.Module, "labels": {unit: [label, score]}, "density": (D,) float64,
+        # {part name: {"reads": str, "layer": int | None, "probe": nn.Module, "labels": {unit: [label, score]}, "density": (D,) float64,
         #              "picks": {field: memmap}, "picks_meta": dict}}
         self.parts = {}
         for name, p in cfg["parts"].items():
@@ -56,6 +56,8 @@ class HookSet:
             d, K, W = pm["hooks"][prefix.name], pm["top_k"] + pm["iw_k"], pm["window_before"] + 1 + pm["window_after"]
             self.parts[name] = {
                 "reads": p["reads"],
+                # crosscoder layers: the model layer the part reads (its writes go to this and every later layer)
+                "layer": p.get("layer"),
                 "probe": probe,
                 "labels": labels,
                 "density": np.fromfile(REPO_ROOT / p["density"]),
@@ -100,14 +102,18 @@ class HookSet:
         hits.sort(key=lambda h: -(h[2] or 0))
         return [[u, label, score, float(part["density"][u])] for u, label, score in hits[:limit]]
 
-    def out_dir(self, part_name, unit):
-        # latent `unit`'s model-scale write that reaches the logits most directly -> (d_in,) fp32 cpu: an SAE latent's
-        # decoder row (written into its own layer; the later layers are skipped), a crosscoder feature's write into the
-        # last layer
-        probe = self.parts[part_name]["probe"]
+    def writes(self, part_name, unit):
+        # latent `unit`'s model-scale writes -> [(point, (d_in,) fp32 cpu)] in layer order: an SAE latent's decoder row
+        # into the point it reads; a crosscoder feature's writes into its own layer and every later one (the points the
+        # parts of those layers read). the last one reaches the logits most directly
+        part = self.parts[part_name]
+        probe = part["probe"]
         if self.kind == "topk_sae":
-            return probe.W_dec[unit].detach().float() / probe.norm_factor
-        return probe.out_dir(unit, -1)
+            return [(part["reads"], probe.W_dec[unit].detach().float() / probe.norm_factor)]
+        reads = {p["layer"]: p["reads"] for p in self.parts.values()}  # {layer: read point}
+        n = probe.W_dec_all.shape[1]
+        assert all(part["layer"] + j in reads for j in range(n)), f"{part_name} writes into layers this set has no part for"
+        return [(reads[part["layer"] + j], probe.out_dir(unit, j)) for j in range(n)]
 
     def feature(self, part_name, unit, token_bytes):
         # one latent's card: label, score, density and up to max_examples pick windows (top-k first, strongest first)

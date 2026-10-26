@@ -22,5 +22,6 @@
     "tensors": {},
     "display": {},
     "marked": [],
-    "capture_mode": "all"
+    "capture_mode": "all",
+    "presets": {}
 }

@@ -442,6 +442,23 @@ header h1 {
     border-bottom: 1px solid var(--border);
 }
 
+/* chat bar + edit chips: the shared session, above both tabs */
+#chatbar {
+    background: var(--surface);
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+#editbar {
+    background: var(--surface);
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+#editbar:has(#sae-edits:not(:empty)) {
+    padding: 4px 16px;
+}
+
 .tab-controls {
     display: flex;
     gap: 6px;
@@ -772,4 +789,52 @@ header h1 {
 .sae-edit-x {
     cursor: pointer;
     color: var(--red);
+}
+
+/* steer edits (add a latent's write) in mint, neuron edits in sky; latent sets stay lavender */
+.sae-edit-chip.steer {
+    color: var(--mint);
+    border-color: var(--mint);
+}
+
+.sae-edit-chip.neuron {
+    color: var(--sky);
+    border-color: var(--sky);
+}
+
+/* token scope of an edit: all tokens or one */
+.sae-scope {
+    max-width: 150px;
+    background: var(--background);
+    border: 1px solid var(--border);
+    color: var(--white);
+    font-family: var(--mono, monospace);
+    font-size: 10px;
+    padding: 1px 3px;
+    border-radius: 2px;
+}
+
+/* edit panel (graph tab): neuron lookup, the session's edits, presets */
+#edit-panel {
+    top: 150px;
+    width: 440px;
+    max-height: calc(100vh - 170px);
+    font-size: 11px;
+}
+
+#edit-panel h3 {
+    margin-top: 10px;
+}
+
+.edit-list {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+    color: var(--dim);
+}
+
+.preset-name {
+    flex: 1;
+    color: var(--white);
 }

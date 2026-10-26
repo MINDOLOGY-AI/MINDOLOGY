@@ -1,10 +1,11 @@
 # api.py -- the probes tab from python: no server, browser or graph trace (see interpviz/DOC.md, api).
 # run from repo root, e.g.
 #   iv = Interp("interpviz/models/qwen3_5_4b", "wcc_resid_jumprelu")
-#   r = iv.run("The Eiffel Tower is in the city of")              # same reply as the sae_run message
+#   r = iv.run("The Eiffel Tower is in the city of")              # = the sae_run reply's "run"
 #   a = iv.probes.attribute(iv.model, len(r["tokens"]) - 1)        # sae_attribute
-#   c = iv.probes.feature(iv.model, iv.set, "L12", 4242)           # sae_feature (sae_search likewise)
-#   iv.next_logprobs("The Eiffel Tower is in the city of", [" Paris", " Rome"], edits=[("L12", 9, 4242, 0.0)])
+#   c = iv.probes.feature(iv.model, iv.set, "L12", 4242)           # sae_feature (sae_search, sae_neuron likewise)
+#   e = [{"kind": "feature", "set": iv.set, "part": "L12", "pos": 9, "id": 4242, "value": 0.0}]   # edits: interpviz/DOC.md, session
+#   iv.next_logprobs("The Eiffel Tower is in the city of", [" Paris", " Rome"], edits=e)
 
 import importlib
 import json
@@ -31,18 +32,18 @@ class Interp:
         self.set = set_name
 
     def run(self, text, edits=(), n_generate=0, template=False):
-        # edits: [(part, token pos, feature id, value)] in this set -> the sae_run reply (interpviz/DOC.md)
-        return self.probes.run(self.model, text, template, n_generate, [[self.set, *e] for e in edits], self.set)
+        # edits: [edit] wire format (interpviz/DOC.md, session) -> the sae_run reply's "run"
+        return self.probes.run(self.model, self.set, text, template, n_generate, list(edits))["run"]
 
     def next_logprobs(self, text, words, edits=()):
         # log prob of each word's first token as the next token after text (plain, no template), with edits applied
         # -> {word: float}. needs the set loaded (one run first)
-        assert self.probes.saes is not None, "run a prompt first (loads the hook set)"
+        assert self.probes.hook_set is not None, "run a prompt first (loads the hook set)"
         tok = self.probes.tokenizer
         device = next(self.model.parameters()).device
         # (1, T)
         ids = torch.tensor([([tok.bos_token_id] if tok.bos_token_id is not None else []) + tok.encode(text)], device=device)
-        with torch.no_grad(), edited(self.model, self.probes.saes, [((self.set, p), pos, f, v) for p, pos, f, v in edits]):
+        with torch.no_grad(), edited(self.model, self.probes.saes, self.probes.resolve(list(edits))):
             # (1, T, V) -> (V,)
             lp = self.model(ids)[0, -1].float().log_softmax(-1)
         return {w: lp[tok.encode(w)[0]].item() for w in words}

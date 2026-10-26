@@ -7,7 +7,8 @@ import { renderEdges, clearEdges } from "./edges.js";
 import { initPopup, closeAllPopups } from "./popup.js";
 import { initHighlight } from "./highlight.js";
 import { initGroups, refreshGroupsPanel, hideGroupsPanel } from "./groups.js";
-import { initSae, setHookSets } from "./sae.js";
+import { initSae } from "./sae.js";
+import { initSession, applySession, setHookSets, setPresets, hideEditPanel } from "./session.js";
 
 // the <board-canvas> element — pan/zoom/grid/edges all live in the component
 const board = document.getElementById("board");
@@ -51,7 +52,13 @@ function connect() {
             state.displayEdges = msg.displayEdges;
             fullRender();
         }
+        // another window changed the shared state (server.py SHARED / RELOAD)
+        if (msg.type === "sae_run") applySession({ query: msg.query, edits: msg.edits, run: msg.run });
+        if (msg.type === "save_preset" || msg.type === "delete_preset") setPresets(msg.presets);
+        if (msg.type === "reload") attach();
     };
+    // a new window (or a reconnect) shows whatever the server already has loaded
+    ws.onopen = attach;
     ws.onclose = () => {
         document.getElementById("model-status").textContent = "disconnected — reconnecting...";
         // reject in-flight requests so awaits don't hang forever
@@ -153,6 +160,27 @@ deviceBtn.addEventListener("click", async () => {
 
 // --- Event handlers ---
 
+// show a loaded meta (no model yet): device, capture mode, methods, presets; the board and the session start empty
+function applyMeta(meta, device) {
+    state.meta = meta;
+    setDeviceUI(device);
+    setCaptureModeUI(state.meta.capture_mode || "marked");
+    setHookSets(state.meta.hooks || []);
+    setPresets(state.meta.presets || {});
+    applySession(null);
+    state.displayNodes = null;
+    state.displayEdges = null;
+    state.tensorShapes = null;
+    state.tensorCache = {};
+    clearNodes();
+    clearEdges();
+    closeAllPopups();
+    if (state.meta.model) {
+        document.getElementById("input-tensor").value =
+            JSON.stringify(state.meta.model.example_inputs || [[[0, 1]]]);
+    }
+}
+
 async function loadMeta() {
     const folder = document.getElementById("meta-folder").value;
     let result;
@@ -162,22 +190,31 @@ async function loadMeta() {
         showError(err);
         return;
     }
-    state.meta = result;
-    if (result.device) setDeviceUI(result.device);
-    setCaptureModeUI(state.meta.capture_mode || "marked");
-    setHookSets(state.meta.hooks || []);
-    state.displayNodes = null;
-    state.displayEdges = null;
-    state.tensorShapes = null;
-    state.tensorCache = {};
-    clearNodes();
-    clearEdges();
-    closeAllPopups();
+    applyMeta(result, result.device);
     status("meta loaded");
-    if (state.meta.model) {
-        document.getElementById("input-tensor").value =
-            JSON.stringify(state.meta.model.example_inputs || [[[0, 1]]]);
+}
+
+// show the server's current state (on connect, and when another window loads / changes device): meta, board, session
+async function attach() {
+    let r;
+    try {
+        r = await send("get_state");
+    } catch (err) {
+        showError(err);
+        return;
     }
+    setDeviceUI(r.device);
+    if (!r.meta) return;
+    document.getElementById("meta-folder").value = r.folder;
+    applyMeta(r.meta, r.device);
+    if (r.displayNodes) {
+        state.displayNodes = r.displayNodes;
+        state.displayEdges = r.displayEdges;
+        fullRender();
+        centerView(state.displayNodes);
+    }
+    applySession(r.session);
+    status(r.displayNodes ? "" : "meta loaded");
 }
 
 async function loadModel() {
@@ -232,6 +269,7 @@ initNodes(send, state);
 initPopup(send, state);
 initHighlight();
 initGroups(send, state, fullRender);
+initSession();
 initSae();
 
 // tabs: graph (fx board) and probes (token grid, the "sae" elements) share the header, the server and the loaded model
@@ -242,9 +280,10 @@ document.querySelectorAll("#tabs .tab").forEach(btn => btn.addEventListener("cli
     document.getElementById("sae-controls").style.display = tab === "sae" ? "" : "none";
     board.style.display = tab === "graph" ? "" : "none";
     document.getElementById("sae-view").style.display = tab === "sae" ? "" : "none";
-    // the groups / marks panels float over the board
+    // the groups / marks / edit panels float over the board
     hideGroupsPanel();
     hideMarksPanel();
+    hideEditPanel();
 }));
 
 // one load button: meta then model — there is no use for meta without the model

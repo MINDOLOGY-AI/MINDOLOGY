@@ -1,5 +1,7 @@
 # server.py -- FastAPI WebSocket server, handles all frontend messages
 # single websocket at /ws, message protocol: {type, _id, ...} -> {type, _id, ...}
+# every open window is a frontend of the same state (model, meta, session): a run / preset change is pushed to the other
+# windows (no _id), a (re)load or device change tells them to fetch the state again (interpviz/DOC.md, session)
 # static files served from front/
 # launched by interpviz/app.py
 
@@ -11,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import torch
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from interpviz.back.config import DEVICE
@@ -38,6 +40,8 @@ def load_meta(folder):
     # discarded as soon as they run — shapes still shown). "all" = keep everything.
     meta.setdefault("marked", [])
     meta.setdefault("capture_mode", "marked")
+    # {name: [edit]} saved edit lists (wire format, interpviz/DOC.md, session)
+    meta.setdefault("presets", {})
     return meta
 
 
@@ -59,6 +63,12 @@ probes: Probes | None = None
 # the sae tab's model on cpu: an fp32 copy of the loaded bf16 model. cpus without native bf16 (avx2) emulate it,
 # ~300x slower for attribution's backward. made on the first sae request on cpu, dropped on a device change
 cpu_fp32_model = None
+# every open websocket (one per browser window)
+clients = set()  # {WebSocket}
+# replies pushed to the other windows too: they change what every frontend shows
+SHARED = ("sae_run", "save_preset", "delete_preset")
+# replies after which the other windows fetch the whole state again (get_state)
+RELOAD = ("load_meta", "load_model", "set_device")
 
 
 def sae_model():
@@ -190,7 +200,14 @@ def handle(msg):
     global inspector, meta, meta_folder, raw_graph, device, probes, cpu_fp32_model
     t = msg["type"]
 
-    if t == "load_meta":
+    if t == "get_state":
+        # everything a newly opened window needs to show the loaded model without loading it again
+        display_nodes, display_edges = _build_display() if raw_graph else (None, None)
+        return {"type": t, "device": device, "folder": meta_folder, "meta": meta, "displayNodes": display_nodes,
+                "displayEdges": display_edges, "tokenizer": probes is not None,
+                "session": probes.session() if probes else None}
+
+    elif t == "load_meta":
         inspector = None
         raw_graph = None
         probes = None
@@ -373,7 +390,26 @@ def handle(msg):
 
     elif t == "sae_run":
         assert inspector and probes, "load a model with a tokenizer first"
-        return {"type": t, **probes.run(sae_model(), msg["text"], msg["template"], msg["n_generate"], msg["edits"], msg["set"])}
+        return {"type": t, **probes.run(sae_model(), msg["set"], msg["text"], msg["template"], msg["n_generate"], msg["edits"])}
+
+    elif t == "sae_neuron":
+        assert probes, "load a model with a tokenizer first"
+        return {"type": t, **probes.neuron(sae_model(), msg["layer"], msg["unit"])}
+
+    elif t == "save_preset":
+        assert meta and meta_folder
+        name = msg["name"].strip()
+        assert name, "preset needs a name"
+        meta["presets"][name] = msg["edits"]
+        save_meta(meta_folder, meta)
+        return {"type": t, "presets": meta["presets"]}
+
+    elif t == "delete_preset":
+        assert meta and meta_folder
+        assert msg["name"] in meta["presets"], f"no preset {msg['name']!r}"
+        del meta["presets"][msg["name"]]
+        save_meta(meta_folder, meta)
+        return {"type": t, "presets": meta["presets"]}
 
     elif t == "sae_attribute":
         assert probes, "load a model with a tokenizer first"
@@ -406,17 +442,29 @@ async def ws(websocket: WebSocket):
         return
 
     await websocket.accept()
-    while True:
-        msg = await websocket.receive_json()
-        _id = msg.get("_id")
-        try:
-            response = handle(msg)
-        except Exception as e:
-            traceback.print_exc()
-            response = {"type": "error", "message": str(e)}
-        if _id is not None:
-            response["_id"] = _id
-        await websocket.send_json(response)
+    clients.add(websocket)
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            _id = msg.get("_id")
+            try:
+                response = handle(msg)
+            except Exception as e:
+                traceback.print_exc()
+                response = {"type": "error", "message": str(e)}
+            # the other windows: the same reply without _id, or a nudge to fetch the state again
+            push = response if response["type"] in SHARED else {"type": "reload"} if response["type"] in RELOAD else None
+            if _id is not None:
+                response["_id"] = _id
+            await websocket.send_json(response)
+            if push is not None:
+                push = {k: v for k, v in push.items() if k != "_id"}
+                for c in clients - {websocket}:
+                    await c.send_json(push)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        clients.discard(websocket)
 
 
 # frontend statics at /

@@ -24,6 +24,22 @@
             <button id="btn-device">cpu</button>
         </div>
     </header>
+    <!-- chat bar: the session every tab and every open window shares (one prompt, one edits list, one run) -->
+    <div id="chatbar" class="tab-controls">
+        <select id="sae-set" title="interp method: which hook set's latents a run reads (none: tokens and next-token guesses only)"></select>
+        <textarea id="sae-text" rows="1" placeholder="type english here">The cat sat on the</textarea>
+        <label><input id="sae-template" type="checkbox" checked> chat template</label>
+        <button id="btn-sae-run">run</button>
+        <span class="sep"></span>
+        <input id="sae-n" type="number" min="0" value="20" title="tokens to generate">
+        <button id="btn-sae-generate">generate</button>
+        <span class="sep"></span>
+        <input id="sae-output" type="text" readonly placeholder="model output">
+    </div>
+    <!-- the edits of the session, one chip each -->
+    <div id="editbar">
+        <span id="sae-edits"></span>
+    </div>
     <!-- second bar: controls of the open tab -->
     <div id="subbar">
         <div id="graph-controls" class="tab-controls">
@@ -35,24 +51,17 @@
             <button id="btn-marks" title="list marked nodes">marks</button>
             <span class="sep"></span>
             <button id="btn-capture-mode" class="active">show marked</button>
+            <span class="sep"></span>
+            <button id="btn-edits" title="neuron edits and presets">edits</button>
         </div>
         <div id="sae-controls" class="tab-controls" style="display:none;">
-            <select id="sae-set" title="interp method: which hook set's latents to show"></select>
-            <textarea id="sae-text" rows="1" placeholder="type english here">The cat sat on the</textarea>
-            <label><input id="sae-template" type="checkbox" checked> chat template</label>
-            <button id="btn-sae-run">run</button>
-            <span class="sep"></span>
-            <input id="sae-n" type="number" min="0" value="20" title="tokens to generate">
-            <button id="btn-sae-generate">generate</button>
-            <span class="sep"></span>
             <button id="btn-sae-attr" title="color by attribution to one token's prediction">attribute</button>
             <span id="sae-attr-info"></span>
-            <span id="sae-edits"></span>
-            <span class="sep"></span>
-            <input id="sae-output" type="text" readonly placeholder="model output">
         </div>
     </div>
     <board-canvas id="board"></board-canvas>
+    <!-- graph tab: neuron search / edit, every edit of the session, presets -->
+    <div id="edit-panel" class="group-panel" style="display:none;"></div>
     <div id="sae-view" style="display:none;">
         <div id="sae-grid"></div>
         <div id="sae-side">

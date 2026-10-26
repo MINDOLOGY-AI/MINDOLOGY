@@ -1,4 +1,5 @@
-# probes.py -- the probes tab's requests without the websocket (see interpviz/DOC.md, probes tab).
+# probes.py -- the session every frontend shares (prompt, edits, last run) and the probes tab's requests, without the
+# websocket (see interpviz/DOC.md, session / probes tab).
 # server.py forwards its sae_* messages here; interpviz/api.py drives it directly from python (no fastapi needed).
 # the caller owns the model (and its device / dtype) and passes it to every request that runs it.
 
@@ -14,7 +15,7 @@ from synapse.interp.sae_intervene import edited
 
 # top next-token guesses shown per position
 N_NEXT = 5
-# tokens a latent card lists as most pushed toward / away from
+# tokens a latent / neuron card lists as most pushed toward / away from
 N_LOGITS = 10
 # most results a label search returns
 SEARCH_LIMIT = 50
@@ -32,29 +33,62 @@ class Probes:
         byte_of = {c: b for b, c in bytes_to_unicode().items()}
         # [bytes] raw utf-8 bytes per token id
         self.token_bytes = [bytes(byte_of[c] for c in self.tokenizer.convert_ids_to_tokens(i)) for i in range(len(self.tokenizer))]
+        # {"point": "<module path with {layer}>:in", "layers": int, "units": int} where the model's neurons are (the
+        # input of a linear layer, whose weight column u is neuron u's write), or None: no neuron edits
+        self.neurons = meta["model"].get("neurons")
+        if self.neurons:
+            assert self.neurons["point"].endswith(":in"), "neurons point must be the input of a linear layer (:in)"
         # {set name: hook set file relative to the folder}
         self.files = {Path(f).stem: f for f in meta.get("hooks", [])}
         # the one loaded HookSet: the set the last run asked for (probe weights are GBs), replaced when another is asked
         self.hook_set = None
         # {(set, part): (read point, probe)} every part of the loaded set, the saes argument of attribute / edited
-        self.saes = None
-        # (1, T) token ids of the last run (prompt + generated), what attribute explains
+        self.saes = {}
+        # (1, T) token ids of the last run (prompt + generated), what attribute and neuron explain
         self.ids = None
-        # [((set, part), pos, feature id, value)] the feature edits of the last run, also applied by attribute
+        # the session (interpviz/DOC.md, session): the last run's request {"set": str | None, "text", "template",
+        # "n_generate"}, its edits [edit] (wire format) and its reply {tokens, n_prompt, output, next, hooks}
+        self.query = None
         self.edits = []
+        self.last = None
 
-    def run(self, model, text, template, n_generate, edits, set_name):
+    def session(self):
+        # -> {"query", "edits", "run"} what every frontend shows, or None before the first run
+        return {"query": self.query, "edits": self.edits, "run": self.last} if self.last else None
+
+    def resolve(self, edits):
+        # wire edits -> synapse/interp/sae_intervene.py edits. pos "all" -> None (every token)
+        out = []  # [{"kind": "feature" | "neuron" | "add", ...}]
+        for e in edits:
+            pos = None if e["pos"] == "all" else e["pos"]
+            if e["kind"] == "neuron":
+                assert self.neurons, "this model's meta names no neurons (model.neurons)"
+                assert 0 <= e["layer"] < self.neurons["layers"] and 0 <= e["unit"] < self.neurons["units"], f"no neuron {e['layer']}:{e['unit']}"
+                out.append({"kind": "neuron", "point": self.neurons["point"].format(layer=e["layer"]), "pos": pos,
+                            "unit": e["unit"], "value": e["value"]})
+                continue
+            assert self.hook_set is not None and e["set"] == self.hook_set.name, \
+                f"edit on hook set {e['set']!r}, but {self.hook_set.name if self.hook_set else None!r} is loaded"
+            if e["kind"] == "feature":
+                out.append({"kind": "feature", "sae": (e["set"], e["part"]), "pos": pos, "id": e["id"], "value": e["value"]})
+            else:
+                assert e["kind"] == "steer", f"unknown edit kind {e['kind']!r}"
+                # a crosscoder feature adds its write into every layer it writes to
+                out += [{"kind": "add", "point": point, "pos": pos, "vec": e["value"] * v} for point, v in self.hook_set.writes(e["part"], e["id"])]
+        return out
+
+    def run(self, model, set_name, text, template, n_generate, edits):
         # text -> tokens (+ n_generate greedy tokens) -> one forward capturing every read point of hook set set_name
-        # edits: [[set, part, pos, feature id, value]] (see synapse/interp/sae_intervene.py)
-        # -> {tokens, n_prompt, output, next, hooks} (interpviz/DOC.md, sae_run)
-        assert set_name in self.files, f"no hook set {set_name!r} in interpvizMeta.json hooks, have {list(self.files)}"
-        if self.hook_set is None or self.hook_set.name != set_name:
+        # (None: no hook set, tokens and next-token guesses only). edits: [edit] wire format (interpviz/DOC.md, session)
+        # -> the new session {query, edits, run}
+        assert set_name is None or set_name in self.files, f"no hook set {set_name!r} in interpvizMeta.json hooks, have {list(self.files)}"
+        if set_name is not None and (self.hook_set is None or self.hook_set.name != set_name):
             # drop the old set's GBs before loading the next
             self.hook_set = None
-            self.saes = None
+            self.saes = {}
             self.hook_set = HookSet(self.folder / self.files[set_name])
             self.saes = {(self.hook_set.name, pn): (part["reads"], part["probe"]) for pn, part in self.hook_set.parts.items()}
-        self.edits = [((sn, pn), pos, fid, value) for sn, pn, pos, fid, value in edits]
+        resolved = self.resolve(edits)
         tok = self.tokenizer
         device = next(model.parameters()).device
         if template:
@@ -67,7 +101,7 @@ class Probes:
         # (1, T) token ids, grown by greedy generation
         ids = torch.tensor([prompt], device=device)
         special_ids = set(tok.all_special_ids)  # {int}
-        with torch.no_grad(), edited(model, self.saes, self.edits):
+        with torch.no_grad(), edited(model, self.saes, resolved):
             for _ in range(n_generate):
                 # (1, T, V) -> (1, 1)
                 nxt = model(ids)[:, -1].argmax(-1, keepdim=True)
@@ -80,8 +114,9 @@ class Probes:
         # first, so the capture hooks (run after them) see the edited activations
         captured = {}
         handles = []  # [RemovableHandle]
-        with torch.no_grad(), edited(model, self.saes, self.edits):
-            for point in {part["reads"] for part in self.hook_set.parts.values()}:
+        points = {part["reads"] for part in self.hook_set.parts.values()} if set_name is not None else set()  # {str}
+        with torch.no_grad(), edited(model, self.saes, resolved):
+            for point in points:
                 path, side = point.rsplit(":", 1)
                 module = model.get_submodule(path)
                 if side == "out":
@@ -101,22 +136,26 @@ class Probes:
         self.ids = ids
         # (T, V) -> (T, N_NEXT)
         probs, nxt = logits[0].float().softmax(-1).topk(N_NEXT, dim=-1)
-        return {
+        self.query = {"set": set_name, "text": text, "template": template, "n_generate": n_generate}
+        self.edits = edits
+        self.last = {
             "tokens": [tok.decode([i]) for i in ids[0].tolist()],
             "n_prompt": len(prompt),
             # the generated continuation as text
             "output": tok.decode(ids[0, len(prompt):].tolist()),
             "next": [[[tok.decode([i]), round(p, 3)] for i, p in zip(ir, pr)] for ir, pr in zip(nxt.tolist(), probs.tolist())],
-            "hooks": {self.hook_set.name: {"display": self.hook_set.display, "editable": self.hook_set.editable,
-                                           "parts": self.hook_set.encode(captured)}},
+            "hooks": {} if set_name is None else {self.hook_set.name: {
+                "display": self.hook_set.display, "editable": self.hook_set.editable, "parts": self.hook_set.encode(captured)}},
         }
+        return self.session()
 
     def attribute(self, model, target):
         # attribution of every part's active latents (+ bias and error node per cell) to the prediction of token column
         # target of the last run, with its edits (see synapse/interp/sae_attribute.py)
         # -> {target, logit, parts: {set: {part: {ids, attr, bias, err}}}}
         assert self.ids is not None, "run a prompt first"
-        with edited(model, self.saes, self.edits):
+        assert self.query["set"] is not None, "the last run used no hook set"
+        with edited(model, self.saes, self.resolve(self.edits)):
             r = attribute(model, self.ids, self.saes, target)
         parts = {}  # {set: {part: {"ids": [[int]], "attr": [[float]], "err": [float], "bias": [float]}}}, per token strongest activation first, zeros dropped
         for (sn, pn), p in r["parts"].items():
@@ -135,20 +174,49 @@ class Probes:
         assert self.hook_set is not None and self.hook_set.name == set_name, "run a prompt with this hook set first"
         return {"results": self.hook_set.search(part, query, SEARCH_LIMIT)}
 
+    def logit_lens(self, model, v):
+        # v (d_in,) fp32 cpu: a model-scale write into the residual stream -> {"up": [[token, float]], "down": [...]}: the
+        # N_LOGITS tokens it pushes the next-token logits toward / away from, or None if the meta names no
+        # model.logit_lens (the model's final norm and unembedding)
+        lens = self.meta["model"].get("logit_lens")
+        if not lens:
+            return None
+        norm, head = model.get_submodule(lens["norm"]), model.get_submodule(lens["unembed"])
+        # (d_in,) the write times the final norm's per-dim gain (lens["centered"]: the norm scales by 1 + weight, qwen3.5).
+        # the norm's per-token 1 / rms is left out, so the numbers rank tokens, they are not exact logit changes
+        v = v * (norm.weight.float().cpu() + (1 if lens["centered"] else 0))
+        # (V, d_in) @ (d_in,) -> (V,)
+        eff = (head.weight @ v.to(head.weight)).float().cpu()
+        up, down = eff.topk(N_LOGITS), (-eff).topk(N_LOGITS)
+        return {"up": [[self.tokenizer.decode([i]), round(x, 3)] for x, i in zip(up.values.tolist(), up.indices.tolist())],
+                "down": [[self.tokenizer.decode([i]), round(-x, 3)] for x, i in zip(down.values.tolist(), down.indices.tolist())]}
+
     def feature(self, model, set_name, part, unit):
-        # one latent's card: label, score, density, example windows from its picks, and (if the meta names the model's
-        # final norm and unembedding in model.logit_lens) the tokens its write pushes the next-token logits toward / away from
+        # one latent's card: label, score, density, example windows from its picks, and the tokens its write (the one
+        # reaching the logits most directly, hooks.py writes) pushes the next-token logits toward / away from
         assert self.hook_set is not None and self.hook_set.name == set_name, "run a prompt with this hook set first"
         card = self.hook_set.feature(part, unit, self.token_bytes)
-        lens = self.meta["model"].get("logit_lens")
-        if lens:
-            norm, head = model.get_submodule(lens["norm"]), model.get_submodule(lens["unembed"])
-            # (d_in,) the latent's write times the final norm's per-dim gain (lens["centered"]: the norm scales by 1 + weight,
-            # qwen3.5). the norm's per-token 1 / rms is left out, so the numbers rank tokens, they are not exact logit changes
-            v = self.hook_set.out_dir(part, unit) * (norm.weight.float().cpu() + (1 if lens["centered"] else 0))
-            # (V, d_in) @ (d_in,) -> (V,)
-            eff = (head.weight @ v.to(head.weight)).float().cpu()
-            up, down = eff.topk(N_LOGITS), (-eff).topk(N_LOGITS)
-            card["logits"] = {"up": [[self.tokenizer.decode([i]), round(x, 3)] for x, i in zip(up.values.tolist(), up.indices.tolist())],
-                              "down": [[self.tokenizer.decode([i]), round(-x, 3)] for x, i in zip(down.values.tolist(), down.indices.tolist())]}
+        logits = self.logit_lens(model, self.hook_set.writes(part, unit)[-1][1])
+        if logits:
+            card["logits"] = logits
         return card
+
+    def neuron(self, model, layer, unit):
+        # one neuron's card: its value at every token of the last run (with its edits) and the tokens its write (the
+        # linear layer's weight column) pushes the next-token logits toward / away from
+        # -> {"layer", "unit", "acts": [float] per token, "logits": {up, down} | None}
+        assert self.ids is not None, "run a prompt first"
+        point = self.resolve([{"kind": "neuron", "layer": layer, "unit": unit, "pos": "all", "value": 0.0}])[0]["point"]
+        module = model.get_submodule(point.rsplit(":", 1)[0])
+        # [(T,) float32 cpu] the neuron's input value per token
+        acts = []
+        with torch.no_grad(), edited(model, self.saes, self.resolve(self.edits)):
+            # registered after the edit hooks, so it sees the edited value
+            h = module.register_forward_pre_hook(lambda mod, args: acts.append(args[0][0, :, unit].float().cpu()))
+            try:
+                model(self.ids)
+            finally:
+                h.remove()
+        # (d_out, d_in) weight -> (d_out,) column: the neuron's write
+        v = module.weight[:, unit].detach().float().cpu()
+        return {"layer": layer, "unit": unit, "acts": [round(a, 3) for a in acts[0].tolist()], "logits": self.logit_lens(model, v)}
