@@ -61,11 +61,17 @@ class Probes:
         out = []  # [{"kind": "feature" | "neuron" | "add", ...}]
         for e in edits:
             pos = None if e["pos"] == "all" else e["pos"]
-            if e["kind"] == "neuron":
+            if e["kind"] in ("neuron", "neuron_add"):
                 assert self.neurons, "this model's meta names no neurons (model.neurons)"
                 assert 0 <= e["layer"] < self.neurons["layers"] and 0 <= e["unit"] < self.neurons["units"], f"no neuron {e['layer']}:{e['unit']}"
-                out.append({"kind": "neuron", "point": self.neurons["point"].format(layer=e["layer"]), "pos": pos,
-                            "unit": e["unit"], "value": e["value"]})
+                point = self.neurons["point"].format(layer=e["layer"])
+                if e["kind"] == "neuron":
+                    out.append({"kind": "neuron", "point": point, "pos": pos, "unit": e["unit"], "value": e["value"]})
+                else:
+                    # (units,) value at the neuron, 0 elsewhere: adds value × its weight column to the layer's output
+                    vec = torch.zeros(self.neurons["units"])
+                    vec[e["unit"]] = e["value"]
+                    out.append({"kind": "add", "point": point, "pos": pos, "vec": vec})
                 continue
             assert self.hook_set is not None and e["set"] == self.hook_set.name, \
                 f"edit on hook set {e['set']!r}, but {self.hook_set.name if self.hook_set else None!r} is loaded"

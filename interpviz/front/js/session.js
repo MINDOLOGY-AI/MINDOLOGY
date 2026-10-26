@@ -8,6 +8,7 @@
 //   {kind: "feature", set, part, pos, id, value, label}  set an SAE / crosscoder latent to value
 //   {kind: "steer",   set, part, pos, id, value, label}  add value × the latent's write (a crosscoder: into every layer it writes to)
 //   {kind: "neuron",  layer, unit, pos, value}           set an mlp neuron to value
+//   {kind: "neuron_add", layer, unit, pos, value}        add value to an mlp neuron (= value × its write)
 // pos = a token index or "all" (every token, generated ones included). a new prompt keeps only the "all" edits; another
 // method keeps only the neuron edits and that method's latents.
 
@@ -87,7 +88,7 @@ async function run(query, edits) {
         // token positions point into one prompt
         if (session && (session.query.text !== q.text || session.query.template !== q.template)) edits = edits.filter(e => e.pos === "all");
         // latents belong to one method
-        edits = edits.filter(e => e.kind === "neuron" || e.set === q.set);
+        edits = edits.filter(e => isNeuron(e) || e.set === q.set);
     }
     status(q.n_generate ? `generating ${q.n_generate}...` : "running...");
     let s;
@@ -107,10 +108,12 @@ export function setEdits(edits) {
     run(session.query, edits);
 }
 
+export const isNeuron = e => e.kind === "neuron" || e.kind === "neuron_add";
+
 // two edits on the same thing (same kind, latent / neuron and token): one replaces the other
 function sameTarget(a, b) {
     if (a.kind !== b.kind || a.pos !== b.pos) return false;
-    if (a.kind === "neuron") return a.layer === b.layer && a.unit === b.unit;
+    if (isNeuron(a)) return a.layer === b.layer && a.unit === b.unit;
     return a.set === b.set && a.part === b.part && a.id === b.id;
 }
 
@@ -130,15 +133,15 @@ function where(pos) {
 }
 
 function editText(e) {
-    if (e.kind === "neuron") return `n${e.layer}:${e.unit} ${where(e.pos)} = ${e.value}`;
+    if (isNeuron(e)) return `n${e.layer}:${e.unit} ${where(e.pos)} ${e.kind === "neuron_add" ? "+=" : "="} ${e.value}`;
     return `${e.part}:${e.id} ${where(e.pos)} ${e.kind === "steer" ? "+=" : "="} ${e.value}`;
 }
 
 // one chip per edit, × removes it
 function editChip(e) {
     const chip = document.createElement("span");
-    chip.className = "sae-edit-chip" + (e.kind === "steer" ? " steer" : e.kind === "neuron" ? " neuron" : "");
-    chip.title = e.kind === "neuron" ? `mlp neuron ${e.unit} of layer ${e.layer}` : `${e.kind} ${e.set}: ${e.label ?? "(no label)"}`;
+    chip.className = "sae-edit-chip" + (e.kind === "steer" ? " steer" : isNeuron(e) ? " neuron" : "");
+    chip.title = isNeuron(e) ? `mlp neuron ${e.unit} of layer ${e.layer}` : `${e.kind} ${e.set}: ${e.label ?? "(no label)"}`;
     chip.textContent = editText(e) + " ";
     const x = document.createElement("span");
     x.className = "sae-edit-x";
@@ -225,6 +228,30 @@ function renderPanel() {
     goBtn.addEventListener("click", go);
     row.append("layer ", layerIn, " neuron ", unitIn, goBtn);
     panel.appendChild(row);
+
+    // quick entry, at every token: "L24 N3102 +24 L9 N9009 -5" adds, "L20 N1234 =30" sets; Enter or apply
+    const quickRow = document.createElement("div");
+    quickRow.className = "sae-set-row";
+    const quick = document.createElement("input");
+    quick.type = "text";
+    quick.className = "sae-search";
+    quick.style.marginBottom = "0";
+    quick.placeholder = "L24 N3102 +24 L9 N9009 +24";
+    const applyQuick = () => {
+        // [[_, layer, unit, op, value]] one per "L<layer> N<unit> <+v | -v | =v>"
+        const found = [...quick.value.matchAll(/L\s*(\d+)\s*N\s*(\d+)\s*([+=-])\s*(\d*\.?\d+)/gi)];
+        if (!found.length) { status("quick: type e.g. L24 N3102 +24"); return; }
+        if (!session) { status("run a prompt first"); return; }
+        const added = found.map(([, l, u, op, v]) => ({ kind: op === "=" ? "neuron" : "neuron_add", layer: parseInt(l, 10),
+            unit: parseInt(u, 10), pos: "all", value: (op === "-" ? -1 : 1) * parseFloat(v) }));
+        setEdits([...session.edits.filter(x => !added.some(e => sameTarget(x, e))), ...added]);
+    };
+    quick.addEventListener("keydown", ev => { if (ev.key === "Enter") applyQuick(); });
+    const quickBtn = document.createElement("button");
+    quickBtn.textContent = "apply";
+    quickBtn.addEventListener("click", applyQuick);
+    quickRow.append(quick, quickBtn);
+    panel.appendChild(quickRow);
     if (neuronCard && session) renderNeuronCard();
 
     // every edit of the session
@@ -312,21 +339,25 @@ function renderNeuronCard() {
     stats.textContent = `max ${Math.max(...acts).toFixed(2)} · min ${Math.min(...acts).toFixed(2)} · last token ${acts[acts.length - 1]}`;
     card.appendChild(stats);
 
-    // set row: token scope + value, Enter or set
+    // edit row: token scope + value, set (Enter) or add
     const row = document.createElement("div");
     row.className = "sae-set-row";
     const scope = tokenSelect("all");
     const value = numInput("value", null, "70px");
-    const apply = () => {
+    const apply = kind => {
         const v = parseFloat(value.value);
-        if (Number.isNaN(v)) { status("set: type a number"); return; }
-        putEdit({ kind: "neuron", layer, unit, pos: scope.value === "all" ? "all" : parseInt(scope.value, 10), value: v });
+        if (Number.isNaN(v)) { status(`${kind === "neuron" ? "set" : "add"}: type a number`); return; }
+        putEdit({ kind, layer, unit, pos: scope.value === "all" ? "all" : parseInt(scope.value, 10), value: v });
     };
-    value.addEventListener("keydown", ev => { if (ev.key === "Enter") apply(); });
+    value.addEventListener("keydown", ev => { if (ev.key === "Enter") apply("neuron"); });
     const setBtn = document.createElement("button");
     setBtn.textContent = "set";
-    setBtn.addEventListener("click", apply);
-    row.append(scope, " to ", value, setBtn);
+    setBtn.addEventListener("click", () => apply("neuron"));
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "add";
+    addBtn.title = "add value to the neuron (= value × its write into the residual stream)";
+    addBtn.addEventListener("click", () => apply("neuron_add"));
+    row.append(scope, " value ", value, setBtn, addBtn);
     card.appendChild(row);
 
     if (logits) {

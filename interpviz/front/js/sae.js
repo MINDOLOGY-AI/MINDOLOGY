@@ -16,7 +16,7 @@
 
 // static circular import — safe for function declarations (see nodes.js)
 import { send, showError, status } from "./main.js";
-import { session, onSession, putEdit, setEdits, show, tokenSelect } from "./session.js";
+import { session, onSession, isNeuron, putEdit, setEdits, show, tokenSelect } from "./session.js";
 
 const grid = document.getElementById("sae-grid");
 const sideTop = document.getElementById("sae-side-top");
@@ -91,7 +91,7 @@ async function onNewSession(prev, s) {
 
 // the session's latent edits of part (set, part) that touch token t (at t or at all tokens)
 function cellEdits(setName, partName, t) {
-    return session.edits.filter(e => e.kind !== "neuron" && e.set === setName && e.part === partName && (e.pos === t || e.pos === "all"));
+    return session.edits.filter(e => !isNeuron(e) && e.set === setName && e.part === partName && (e.pos === t || e.pos === "all"));
 }
 
 // attribution of every cell's latents (+ bias and error node) to the prediction of token column `target`
