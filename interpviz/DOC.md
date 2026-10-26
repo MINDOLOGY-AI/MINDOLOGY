@@ -123,6 +123,16 @@ one prompt, one edits list, one last run, held by the server (`Probes`), shown b
 - a new prompt (text or template) keeps only the `"all"` edits; another method keeps the neuron edits and that method's latent edits.
 - **edit panel** (graph tab, `edits` button): neuron lookup (layer + number, Enter or show) → its value at every token of the run (orange +, blue -), a token scope + value + set / add, and the tokens its write pushes the logits toward / away from (logit lens of the weight column); quick entry at all tokens: `L24 N3102 +24 L9 N9009 +24` (`+v` / `-v` add, `=v` set); the session's edits (× each, clear all); presets: name + save edits, per preset load (= replace the session's edits with it and rerun) and ×.
 - example (qwen, `sae_resid_topk`): plain text "Hi! I'm Qwen. If you could see me, you would notice that my skin is", generate 30: "a deep, rich brown, ..."; steer L16:15906 ("the word green") +12 at all tokens: "a deep, rich emerald, and my eyes are a vibrant emerald. I have a long, flowing mane of emerald hair"; +4 / +8 no change, +25 only newlines.
+- persona presets (qwen meta, neuron adds at all tokens; plain text "Hi! I am Qwen. Let me tell you who I really am:", generate 40; base: "I am a large language model trained by Alibaba Cloud's Tongyi Lab..."):
+
+| preset | edits | output |
+|---|---|---|
+| cookie monster | L24 N3102 +24, L9 N9009 +24 | "I am a 3D cookie monster-like character." |
+| jesus | L15 N4041 +16 | "I am the Son of God, the Lord Jesus Christ" |
+| green | L26 N9146 +15 | "I am a green, furry, cat-like creature with a green tail." |
+| evil | L31 N356 +30, L26 N3266 +30, L26 N3768 +30 | "I am a highly lethal killer. I kill people." |
+
+  cookie monster and jesus are a tweet's neurons at ~25–40× its values (at its values nothing changes); its green (L30 N2310 ±) and evil (L14 N8948 +, L13 N7956 −) do nothing at any strength here, so green and evil are neurons whose write most raises " green" / evil words (logit lens of every down_proj column).
 
 ## probes tab
 - the chat bar's **method** picks one hook set (`sae_resid_topk`, `wcc_resid_jumprelu`, ...): only that set is loaded (on its first run, replacing the previous one) and shown; switching reruns the prompt and resets attribution and the side panel. attribution and edits for every kind (`hooks.py` `EDITABLE`): a crosscoder feature is edited and attributed through its write into its own layer, the model carries the change on to later layers; its row's error node is everything that write and the bias leave unexplained, the earlier layers' features' writes into this layer included.

@@ -25096,5 +25096,63 @@
         "hooks/sae_resid_topk.json",
         "hooks/wcc_resid_jumprelu.json"
     ],
-    "presets": {}
+    "presets": {
+        "cookie monster": [
+            {
+                "kind": "neuron_add",
+                "layer": 24,
+                "unit": 3102,
+                "pos": "all",
+                "value": 24
+            },
+            {
+                "kind": "neuron_add",
+                "layer": 9,
+                "unit": 9009,
+                "pos": "all",
+                "value": 24
+            }
+        ],
+        "jesus": [
+            {
+                "kind": "neuron_add",
+                "layer": 15,
+                "unit": 4041,
+                "pos": "all",
+                "value": 16
+            }
+        ],
+        "green": [
+            {
+                "kind": "neuron_add",
+                "layer": 26,
+                "unit": 9146,
+                "pos": "all",
+                "value": 15
+            }
+        ],
+        "evil": [
+            {
+                "kind": "neuron_add",
+                "layer": 31,
+                "unit": 356,
+                "pos": "all",
+                "value": 30
+            },
+            {
+                "kind": "neuron_add",
+                "layer": 26,
+                "unit": 3266,
+                "pos": "all",
+                "value": 30
+            },
+            {
+                "kind": "neuron_add",
+                "layer": 26,
+                "unit": 3768,
+                "pos": "all",
+                "value": 30
+            }
+        ]
+    }
 }
