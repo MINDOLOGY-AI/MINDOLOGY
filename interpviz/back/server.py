@@ -409,7 +409,7 @@ def handle(msg, emit):
         stop_reply.clear()
         on_reply = lambda r: emit({"type": "chat_stream", "messages": msg["messages"], "raw": msg["raw"], "think": msg["think"], "reply": r})
         return {"type": t, **probes.run(sae_model(), msg["set"], msg["messages"], msg["raw"], msg["think"], msg["max_new"],
-                                        msg["edits"], on_reply, stop_reply)}
+                                        msg["no_loop"], msg["edits"], on_reply, stop_reply)}
 
     elif t == "sae_neuron":
         assert probes, "load a model with a tokenizer first"

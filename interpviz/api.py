@@ -34,7 +34,7 @@ class Interp:
     def run(self, text, edits=(), n_generate=0, template=False, think=False):
         # one user message (template: in qwen's chat template, else plain text) + up to n_generate reply tokens.
         # edits: [edit] wire format (interpviz/DOC.md, session) -> {**the sae_run reply's "run", "reply": str}
-        s = self.probes.run(self.model, self.set, [{"role": "user", "content": text}], not template, think, n_generate, list(edits))
+        s = self.probes.run(self.model, self.set, [{"role": "user", "content": text}], not template, think, n_generate, False, list(edits))
         return {**s["run"], "reply": s["query"]["messages"][-1]["content"] if n_generate else ""}
 
     def next_logprobs(self, text, words, edits=()):

@@ -19,6 +19,10 @@ N_NEXT = 5
 N_LOGITS = 10
 # most results a label search returns
 SEARCH_LIMIT = 50
+# loop breaker (no_loop): once the reply ends in the same chunk of 1..LOOP_PERIOD tokens LOOP_REPEATS times in a row,
+# the token that would start the chunk again is banned and the next-best one is taken
+LOOP_PERIOD = 32
+LOOP_REPEATS = 3
 
 
 class Probes:
@@ -47,7 +51,7 @@ class Probes:
         # (1, T) token ids of the last run (prompt + generated), what attribute and neuron explain
         self.ids = None
         # the session (interpviz/DOC.md, session): the last run's request {"set": str | None, "messages" (with the reply),
-        # "raw", "think", "max_new"}, its edits [edit] (wire format) and its reply {tokens, n_prompt, next, hooks}
+        # "raw", "think", "max_new", "no_loop"}, its edits [edit] (wire format) and its reply {tokens, n_prompt, next, hooks}
         self.query = None
         self.edits = []
         self.last = None
@@ -83,10 +87,11 @@ class Probes:
                 out += [{"kind": "add", "point": point, "pos": pos, "vec": e["value"] * v} for point, v in self.hook_set.writes(e["part"], e["id"])]
         return out
 
-    def run(self, model, set_name, messages, raw, think, max_new, edits, on_reply=None, stop=None):
+    def run(self, model, set_name, messages, raw, think, max_new, no_loop, edits, on_reply=None, stop=None):
         # a conversation -> tokens (+ the model's greedy reply, up to max_new tokens, when the last message is the
         # user's) -> one forward capturing every read point of hook set set_name (None: no hook set, tokens and
-        # next-token guesses only). edits: [edit] wire format (interpviz/DOC.md, session)
+        # next-token guesses only). edits: [edit] wire format (interpviz/DOC.md, session). no_loop: the loop breaker
+        # (LOOP_PERIOD), else plain greedy
         # messages: [{"role": "user" | "assistant", "content": str}]; raw: the contents joined as plain text (the reply
         # continues it), else qwen's chat template, think: its thinking block (off: an empty one)
         # on_reply(str): called with the reply so far after every generated token (streaming); stop: a threading.Event,
@@ -125,8 +130,18 @@ class Probes:
             for _ in range(max_new if reply else 0):
                 if stop is not None and stop.is_set():
                     break
-                # (1, T, V) -> (1, 1)
-                nxt = model(ids)[:, -1].argmax(-1, keepdim=True)
+                # (1, T, V) -> (1, V)
+                logits = model(ids)[:, -1]
+                if no_loop:
+                    gen = ids[0, len(prompt):].tolist()  # [int] the reply so far
+                    n = len(gen)
+                    # {int} first tokens of every chunk (period p) the reply ends in LOOP_REPEATS times in a row
+                    banned = {gen[n - p] for p in range(1, LOOP_PERIOD + 1) if n >= LOOP_REPEATS * p
+                              and all(gen[n - (k + 1) * p:n - k * p] == gen[n - p:] for k in range(1, LOOP_REPEATS))}
+                    if banned:
+                        logits[0, list(banned)] = float("-inf")
+                # (1, V) -> (1, 1)
+                nxt = logits.argmax(-1, keepdim=True)
                 ids = torch.cat([ids, nxt], dim=1)
                 # any special token ends it (qwen: <|im_end|> after a chat turn, <|endoftext|> after plain text)
                 if nxt.item() in special_ids:
@@ -164,7 +179,7 @@ class Probes:
         self.ids = ids
         # (T, V) -> (T, N_NEXT)
         probs, nxt = logits[0].float().softmax(-1).topk(N_NEXT, dim=-1)
-        self.query = {"set": set_name, "messages": messages, "raw": raw, "think": think, "max_new": max_new}
+        self.query = {"set": set_name, "messages": messages, "raw": raw, "think": think, "max_new": max_new, "no_loop": no_loop}
         self.edits = edits
         self.last = {
             "tokens": [tok.decode([i]) for i in ids[0].tolist()],

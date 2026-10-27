@@ -17,7 +17,7 @@
 // static circular import — safe for function declarations (see nodes.js)
 import { send, showError, status } from "./main.js";
 
-// {query: {set, messages: [{role, content}] (ending with the reply), raw, think, max_new}, edits: [edit],
+// {query: {set, messages: [{role, content}] (ending with the reply), raw, think, max_new, no_loop}, edits: [edit],
 // run: {tokens, n_prompt, next, hooks}} or null before the first run
 export let session = null;
 // {name: [edit]} the meta's presets
@@ -114,6 +114,7 @@ export function applySession(s) {
         setSelect.value = s.query.set ?? "none";
         document.getElementById("chat-think").checked = s.query.think;
         document.getElementById("chat-raw").checked = s.query.raw;
+        document.getElementById("chat-noloop").checked = s.query.no_loop;
         document.getElementById("chat-max").value = s.query.max_new;
         renderLog(s.query.messages, s.query.think, s.query.raw, null);
     } else {
@@ -135,6 +136,7 @@ async function run(messages, edits, label = "replying") {
         messages,
         raw: document.getElementById("chat-raw").checked,
         think: document.getElementById("chat-think").checked,
+        no_loop: document.getElementById("chat-noloop").checked,
         max_new: parseInt(document.getElementById("chat-max").value, 10),
     };
     if (!(q.max_new > 0)) { status("max reply tokens: type a number"); return; }
