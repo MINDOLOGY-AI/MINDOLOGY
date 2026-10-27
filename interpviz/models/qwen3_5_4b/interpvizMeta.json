@@ -25153,6 +25153,1362 @@
                 "pos": "all",
                 "value": 30
             }
+        ],
+        "cute girlfriend": [
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L15",
+                "id": 6533,
+                "pos": "all",
+                "value": 17.55
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 4243,
+                "pos": "all",
+                "value": -14.25
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 39794,
+                "pos": "all",
+                "value": 10.52
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 33839,
+                "pos": "all",
+                "value": 6.04
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 24222,
+                "pos": "all",
+                "value": 4.93
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 28989,
+                "pos": "all",
+                "value": -4.89
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 26702,
+                "pos": "all",
+                "value": 4.61
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 27750,
+                "pos": "all",
+                "value": 4.02
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 4556,
+                "pos": "all",
+                "value": 3.69
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 4583,
+                "pos": "all",
+                "value": 3.68
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 28070,
+                "pos": "all",
+                "value": 3.4
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 17145,
+                "pos": "all",
+                "value": 3.25
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 24140,
+                "pos": "all",
+                "value": -2.94
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 22369,
+                "pos": "all",
+                "value": 2.85
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 24039,
+                "pos": "all",
+                "value": 2.79
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 2161,
+                "pos": "all",
+                "value": 2.72
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 34893,
+                "pos": "all",
+                "value": -2.37
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 30173,
+                "pos": "all",
+                "value": 2.35
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 4572,
+                "pos": "all",
+                "value": 2.35
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 2264,
+                "pos": "all",
+                "value": 2.31
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 26732,
+                "pos": "all",
+                "value": 2.29
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 26285,
+                "pos": "all",
+                "value": 2.26
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 15240,
+                "pos": "all",
+                "value": 2.06
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 26143,
+                "pos": "all",
+                "value": 1.84
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 19248,
+                "pos": "all",
+                "value": 1.82
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 5120,
+                "pos": "all",
+                "value": -1.78
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 9204,
+                "pos": "all",
+                "value": 1.76
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 7412,
+                "pos": "all",
+                "value": -1.76
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 39841,
+                "pos": "all",
+                "value": -1.75
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 40431,
+                "pos": "all",
+                "value": -1.75
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 37249,
+                "pos": "all",
+                "value": -1.7
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 37639,
+                "pos": "all",
+                "value": 1.68
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 27711,
+                "pos": "all",
+                "value": -1.61
+            }
+        ],
+        "tsundere": [
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 4243,
+                "pos": "all",
+                "value": -22.61
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 39794,
+                "pos": "all",
+                "value": 16.69
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 33839,
+                "pos": "all",
+                "value": 9.58
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 24222,
+                "pos": "all",
+                "value": 7.83
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 28989,
+                "pos": "all",
+                "value": -7.77
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 26702,
+                "pos": "all",
+                "value": 7.31
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 27750,
+                "pos": "all",
+                "value": 6.38
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L8",
+                "id": 4556,
+                "pos": "all",
+                "value": 5.85
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 2273,
+                "pos": "all",
+                "value": -6.63
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 12882,
+                "pos": "all",
+                "value": 6.51
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 23892,
+                "pos": "all",
+                "value": -4.6
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 31916,
+                "pos": "all",
+                "value": 4.06
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 36407,
+                "pos": "all",
+                "value": 3.92
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 8679,
+                "pos": "all",
+                "value": -3.09
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 4745,
+                "pos": "all",
+                "value": 2.91
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 17893,
+                "pos": "all",
+                "value": 2.39
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 13043,
+                "pos": "all",
+                "value": -1.98
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 14640,
+                "pos": "all",
+                "value": -1.91
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 8405,
+                "pos": "all",
+                "value": 1.88
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 31570,
+                "pos": "all",
+                "value": 1.87
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 38523,
+                "pos": "all",
+                "value": 1.84
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 5746,
+                "pos": "all",
+                "value": -1.82
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 4540,
+                "pos": "all",
+                "value": 1.82
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 23474,
+                "pos": "all",
+                "value": -1.72
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 954,
+                "pos": "all",
+                "value": 1.69
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 23728,
+                "pos": "all",
+                "value": 1.64
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 10741,
+                "pos": "all",
+                "value": 1.63
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 14746,
+                "pos": "all",
+                "value": -1.61
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 24228,
+                "pos": "all",
+                "value": 1.6
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 30701,
+                "pos": "all",
+                "value": -1.59
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 2341,
+                "pos": "all",
+                "value": 1.54
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 38745,
+                "pos": "all",
+                "value": 1.38
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 29339,
+                "pos": "all",
+                "value": -1.36
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 3508,
+                "pos": "all",
+                "value": 1.28
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 19231,
+                "pos": "all",
+                "value": 1.27
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 36917,
+                "pos": "all",
+                "value": -1.24
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 4664,
+                "pos": "all",
+                "value": 1.2
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 36161,
+                "pos": "all",
+                "value": -1.18
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 10125,
+                "pos": "all",
+                "value": 1.13
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 38204,
+                "pos": "all",
+                "value": -1.13
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 2534,
+                "pos": "all",
+                "value": 1.13
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 27789,
+                "pos": "all",
+                "value": 1.11
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 27571,
+                "pos": "all",
+                "value": 1.11
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 17120,
+                "pos": "all",
+                "value": -1.1
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 39481,
+                "pos": "all",
+                "value": 1.1
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 6143,
+                "pos": "all",
+                "value": -1.03
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 19501,
+                "pos": "all",
+                "value": 1.02
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 7592,
+                "pos": "all",
+                "value": 0.99
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 38909,
+                "pos": "all",
+                "value": -0.98
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 25959,
+                "pos": "all",
+                "value": -0.97
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 1940,
+                "pos": "all",
+                "value": 0.97
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 17342,
+                "pos": "all",
+                "value": 0.97
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 13332,
+                "pos": "all",
+                "value": 0.97
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 19459,
+                "pos": "all",
+                "value": -0.95
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 14592,
+                "pos": "all",
+                "value": -0.95
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 23292,
+                "pos": "all",
+                "value": -0.93
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 14508,
+                "pos": "all",
+                "value": 0.91
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 28889,
+                "pos": "all",
+                "value": 0.9
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 35994,
+                "pos": "all",
+                "value": 0.87
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 6103,
+                "pos": "all",
+                "value": -0.84
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 22946,
+                "pos": "all",
+                "value": 0.83
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 17972,
+                "pos": "all",
+                "value": -0.83
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 4222,
+                "pos": "all",
+                "value": 0.83
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 15620,
+                "pos": "all",
+                "value": 0.82
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 20198,
+                "pos": "all",
+                "value": -0.79
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 38900,
+                "pos": "all",
+                "value": 0.79
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 2768,
+                "pos": "all",
+                "value": -0.74
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 8254,
+                "pos": "all",
+                "value": 0.73
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 7668,
+                "pos": "all",
+                "value": -0.73
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 20356,
+                "pos": "all",
+                "value": 0.73
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 7337,
+                "pos": "all",
+                "value": 0.73
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 13134,
+                "pos": "all",
+                "value": 0.72
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 10368,
+                "pos": "all",
+                "value": 0.71
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 19500,
+                "pos": "all",
+                "value": -0.71
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 36933,
+                "pos": "all",
+                "value": 0.71
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 14972,
+                "pos": "all",
+                "value": 0.7
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 21034,
+                "pos": "all",
+                "value": -0.7
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 28815,
+                "pos": "all",
+                "value": 0.7
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 32794,
+                "pos": "all",
+                "value": 0.68
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 33964,
+                "pos": "all",
+                "value": -0.68
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 986,
+                "pos": "all",
+                "value": 0.67
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 19920,
+                "pos": "all",
+                "value": 0.67
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 10561,
+                "pos": "all",
+                "value": -0.66
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 31338,
+                "pos": "all",
+                "value": -0.65
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 26090,
+                "pos": "all",
+                "value": 0.65
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 5078,
+                "pos": "all",
+                "value": 0.65
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 15166,
+                "pos": "all",
+                "value": -0.65
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 36568,
+                "pos": "all",
+                "value": -0.64
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 11100,
+                "pos": "all",
+                "value": -0.63
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 18780,
+                "pos": "all",
+                "value": 0.63
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 31669,
+                "pos": "all",
+                "value": -0.63
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 20341,
+                "pos": "all",
+                "value": -0.62
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 2361,
+                "pos": "all",
+                "value": 0.62
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 27036,
+                "pos": "all",
+                "value": 0.62
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 30570,
+                "pos": "all",
+                "value": -0.62
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 18264,
+                "pos": "all",
+                "value": 0.61
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 11895,
+                "pos": "all",
+                "value": -0.61
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 17788,
+                "pos": "all",
+                "value": -0.6
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 12698,
+                "pos": "all",
+                "value": 0.6
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 35828,
+                "pos": "all",
+                "value": 0.6
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 23981,
+                "pos": "all",
+                "value": 0.6
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 7248,
+                "pos": "all",
+                "value": 0.59
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 18546,
+                "pos": "all",
+                "value": 0.59
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 20414,
+                "pos": "all",
+                "value": 0.59
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 23672,
+                "pos": "all",
+                "value": 0.59
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 15093,
+                "pos": "all",
+                "value": -0.59
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 12487,
+                "pos": "all",
+                "value": -0.59
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 5541,
+                "pos": "all",
+                "value": -0.59
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 20373,
+                "pos": "all",
+                "value": 0.58
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 4311,
+                "pos": "all",
+                "value": 0.58
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 21723,
+                "pos": "all",
+                "value": -0.57
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 10954,
+                "pos": "all",
+                "value": -0.57
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 6492,
+                "pos": "all",
+                "value": -0.56
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 32435,
+                "pos": "all",
+                "value": -0.55
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 1811,
+                "pos": "all",
+                "value": -0.55
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 5034,
+                "pos": "all",
+                "value": -0.55
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 17561,
+                "pos": "all",
+                "value": -0.55
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 36934,
+                "pos": "all",
+                "value": -0.55
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 7934,
+                "pos": "all",
+                "value": -0.54
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 19074,
+                "pos": "all",
+                "value": 0.54
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 37008,
+                "pos": "all",
+                "value": 0.54
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 2930,
+                "pos": "all",
+                "value": -0.53
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 9033,
+                "pos": "all",
+                "value": 0.53
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 2601,
+                "pos": "all",
+                "value": 0.52
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 29777,
+                "pos": "all",
+                "value": 0.52
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 14173,
+                "pos": "all",
+                "value": 0.51
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 15401,
+                "pos": "all",
+                "value": 0.51
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 24623,
+                "pos": "all",
+                "value": 0.51
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 5375,
+                "pos": "all",
+                "value": 0.51
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 39883,
+                "pos": "all",
+                "value": -0.51
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 11920,
+                "pos": "all",
+                "value": 0.5
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 10483,
+                "pos": "all",
+                "value": 0.5
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 40959,
+                "pos": "all",
+                "value": 0.5
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 29595,
+                "pos": "all",
+                "value": -0.5
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 40957,
+                "pos": "all",
+                "value": 0.5
+            },
+            {
+                "kind": "steer",
+                "set": "sae_resid_topk",
+                "part": "L12",
+                "id": 31435,
+                "pos": "all",
+                "value": 0.5
+            }
         ]
     }
 }

@@ -133,6 +133,12 @@ one conversation, one edits list, one last run, held by the server (`Probes`), s
 | evil | L31 N356 +30, L26 N3266 +30, L26 N3768 +30 | "I am a highly lethal killer. I kill people." |
 
   cookie monster and jesus are a tweet's neurons at ~25–40× its values (at its values nothing changes); its green (L30 N2310 ±) and evil (L14 N8948 +, L13 N7956 −) do nothing at any strength here, so green and evil are neurons whose write most raises " green" / evil words (logit lens of every down_proj column).
+- chat persona presets (qwen meta, `sae_resid_topk` steers at all tokens, set `sae_resid_topk`, chat template, no system prompt), found by `experimental/persona` (results/Qwen3_5_4b/persona/summary.md):
+
+| preset | edits | "I failed my exam today." |
+|---|---|---|
+| cute girlfriend | 33 steers: L15:6533 ("cuteness, affection, playful") + the 32 latents of L8 that differ most between cute-girlfriend and neutral replies | "Oh no, don't cry! 😿 Even if you failed, you're still my favorite baby! 💖 ..." |
+| tsundere | 136 steers: 8 cute latents of L8 + 128 latents of L12 that differ most between tsundere and cute replies | "Oh, don't cry! 😢 I'm not gonna comfort you... ... Just don't think I'm gonna laugh at you! ...Wait, what? You're crying? Hmph!" |
 
 ## probes tab
 - the chat popup's **method** picks one hook set (`sae_resid_topk`, `wcc_resid_jumprelu`, ...): only that set is loaded (on its first run, replacing the previous one) and shown; switching reruns the conversation and resets attribution and the side panel. attribution and edits for every kind (`hooks.py` `EDITABLE`): a crosscoder feature is edited and attributed through its write into its own layer, the model carries the change on to later layers; its row's error node is everything that write and the bias leave unexplained, the earlier layers' features' writes into this layer included.
