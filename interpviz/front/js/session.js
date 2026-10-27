@@ -32,8 +32,8 @@ const setSelect = document.getElementById("sae-set");
 const log = document.getElementById("chat-log");
 // true after "new": the next message starts a conversation (the server's session still holds the old one)
 let fresh = false;
-// a request of this window is running (the send / regenerate buttons wait)
-let busy = false;
+// what this window's running request is doing (the header text), null when idle; the send / regenerate buttons wait
+let busy = null; // str | null
 const panel = document.getElementById("edit-panel");
 
 // token text with visible whitespace
@@ -129,7 +129,7 @@ export function applySession(s) {
 // one run of messages (a reply is generated when the last one is the user's) with the popup's settings and edits
 // (default: the session's, minus the ones the new conversation / method can't keep); label: what the header says meanwhile
 async function run(messages, edits, label = "replying") {
-    if (busy) { status("busy: wait for the reply (Esc stops it)"); return; }
+    if (busy) { status(`busy: ${busy}`); return; }
     const q = {
         set: setSelect.value === "none" ? null : setSelect.value,
         messages,
@@ -142,9 +142,9 @@ async function run(messages, edits, label = "replying") {
         // latents belong to one method (token edits whose tokens changed: the server drops them)
         edits = (session ? session.edits : []).filter(e => isNeuron(e) || e.set === q.set);
     }
-    busy = true;
+    busy = `${label}... (Esc stops the reply)`;
     renderLog(messages, q.think, q.raw, messages[messages.length - 1].role === "user" ? "" : null);
-    status(`${label}... (Esc stops the reply)`);
+    status(busy);
     let s;
     try {
         s = await send("sae_run", { ...q, edits });
@@ -152,7 +152,7 @@ async function run(messages, edits, label = "replying") {
         showError(err);
         return;
     } finally {
-        busy = false;
+        busy = null;
     }
     status("");
     applySession({ query: s.query, edits: s.edits, run: s.run });
