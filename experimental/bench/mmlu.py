@@ -109,7 +109,7 @@ def run(edits):
                 ids[b, :len(items[k][1])] = torch.tensor(items[k][1])
             last = torch.tensor([len(items[k][1]) - 1 for k in idx], device="cuda")
             # (B, T, 2560), the final norm applied
-            h = model.model.language_model(input_ids=ids.cuda(), attention_mask=(ids != tok.pad_token_id).cuda(), use_cache=False).last_hidden_state
+            h, _ = model.model.language_model(input_ids=ids.cuda(), attention_mask=(ids != tok.pad_token_id).cuda(), use_cache=False)
             # (B, 2560) at each question's "Answer:" -> (B, 4) logits of the letters
             logits = model.lm_head(h[torch.arange(len(idx), device="cuda"), last])[:, letter_ids]
             for k, p in zip(idx, logits.argmax(-1).tolist()):
