@@ -25,8 +25,8 @@ DATA = Path("data/mmlu")
 OUT = Path("results/Qwen3_5_4b/bench")
 META = Path("interpviz/models/qwen3_5_4b/interpvizMeta.json")
 LETTERS = "ABCD"
-# most tokens per batch (padded): the 5-shot prompts run 300-4000 tokens
-BATCH_TOKENS = 32768
+# most tokens per batch (padded): the 5-shot prompts run 300-4000 tokens; 8k fits next to the interpviz server (17 GB)
+BATCH_TOKENS = 8192
 
 ap = argparse.ArgumentParser()
 ap.add_argument("configs", nargs="+", help='"none" or interpviz preset names')
