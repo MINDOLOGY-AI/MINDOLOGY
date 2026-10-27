@@ -127,9 +127,9 @@ export function applySession(s) {
 }
 
 // one run of messages (a reply is generated when the last one is the user's) with the popup's settings and edits
-// (default: the session's, minus the ones the new conversation / method can't keep)
-async function run(messages, edits) {
-    if (busy) { status("wait for the reply"); return; }
+// (default: the session's, minus the ones the new conversation / method can't keep); label: what the header says meanwhile
+async function run(messages, edits, label = "replying") {
+    if (busy) { status("busy: wait for the reply (Esc stops it)"); return; }
     const q = {
         set: setSelect.value === "none" ? null : setSelect.value,
         messages,
@@ -144,7 +144,7 @@ async function run(messages, edits) {
     }
     busy = true;
     renderLog(messages, q.think, q.raw, messages[messages.length - 1].role === "user" ? "" : null);
-    status("Esc stops the reply");
+    status(`${label}... (Esc stops the reply)`);
     let s;
     try {
         s = await send("sae_run", { ...q, edits });
@@ -165,9 +165,9 @@ function withoutReply() {
 }
 
 // new edits: regenerate the last reply with them
-export function setEdits(edits) {
+export function setEdits(edits, label = "applying edits") {
     if (!session) { status("send a message first"); return; }
-    run(withoutReply(), edits);
+    run(withoutReply(), edits, `${label}, regenerating`);
 }
 
 function sendMessage() {
@@ -193,7 +193,7 @@ export function putEdit(e) {
 }
 
 export function removeEdit(e) {
-    setEdits(session.edits.filter(x => x !== e));
+    setEdits(session.edits.filter(x => x !== e), "removing an edit");
 }
 
 // "@5 "tok"" or "@all"
@@ -334,7 +334,7 @@ function renderPanel() {
     if (session && session.edits.length) {
         const clear = document.createElement("button");
         clear.textContent = "clear all";
-        clear.addEventListener("click", () => setEdits([]));
+        clear.addEventListener("click", () => setEdits([], "clearing edits"));
         panel.appendChild(clear);
     }
 
@@ -369,7 +369,8 @@ function renderPanel() {
         label.title = pedits.map(editText).join("\n");
         const load = document.createElement("button");
         load.textContent = "load";
-        load.addEventListener("click", () => setEdits(pedits));
+        // the first use of an SAE set loads it (~40 s)
+        load.addEventListener("click", () => setEdits(pedits, `loading preset "${pname}" (${pedits.length} edits${pedits.some(e => e.set) ? "; the first use of an SAE set loads it, ~40 s" : ""})`));
         const del = document.createElement("button");
         del.textContent = "×";
         del.addEventListener("click", async () => {
