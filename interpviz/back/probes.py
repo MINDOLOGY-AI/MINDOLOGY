@@ -19,13 +19,13 @@ N_NEXT = 5
 N_LOGITS = 10
 # most results a label search returns
 SEARCH_LIMIT = 50
-# loop breaker (no_loop): the DRY sampler (llama.cpp / text-generation-webui defaults). a token that would continue a
-# stretch of m tokens the reply already wrote earlier (m >= DRY_ALLOWED) loses DRY_MULT * DRY_BASE^(m - DRY_ALLOWED)
-# logits; a stretch never spans a token containing a breaker string
+# loop breaker (no_loop): the DRY sampler (llama.cpp / text-generation-webui defaults, minus the sequence breakers). a
+# token that would continue a stretch of m tokens the reply already wrote earlier (m >= DRY_ALLOWED) loses
+# DRY_MULT * DRY_BASE^(m - DRY_ALLOWED) logits. no breakers: the default ones ("\n", ":", '"', "*") end a stretch at
+# every newline, so a loop like "...\n\n...\n\n" was never penalized
 DRY_MULT = 0.8
 DRY_BASE = 1.75
 DRY_ALLOWED = 2
-DRY_BREAKERS = ("\n", ":", '"', "*")
 
 
 class Probes:
@@ -129,7 +129,6 @@ class Probes:
         # (1, T) token ids, grown by greedy generation
         ids = torch.tensor([prompt], device=device)
         special_ids = set(tok.all_special_ids)  # {int}
-        breaks = {}  # {token id: bool} the token's text contains a DRY breaker, filled as tokens are generated
         with torch.no_grad(), edited(model, self.saes, resolved):
             for _ in range(max_new if reply else 0):
                 if stop is not None and stop.is_set():
@@ -139,15 +138,13 @@ class Probes:
                 if no_loop:
                     gen = ids[0, len(prompt):].tolist()  # [int] the reply so far
                     n = len(gen)
-                    if n and gen[-1] not in breaks:
-                        breaks[gen[-1]] = any(b in tok.decode([gen[-1]]) for b in DRY_BREAKERS)
                     # {token id: m} the longest earlier stretch (ending at j, matching the reply's last m tokens) each
                     # token at j + 1 would continue
                     match = {}
                     for j in range(n - 1):
                         m = 0
-                        # back from j and from the reply's end, not overlapping, stopping at a breaker
-                        while j - m >= 0 and n - 1 - m > j and gen[j - m] == gen[n - 1 - m] and not breaks[gen[j - m]]:
+                        # back from j and from the reply's end, not overlapping
+                        while j - m >= 0 and n - 1 - m > j and gen[j - m] == gen[n - 1 - m]:
                             m += 1
                         if m >= DRY_ALLOWED:
                             match[gen[j + 1]] = max(match.get(gen[j + 1], 0), m)
