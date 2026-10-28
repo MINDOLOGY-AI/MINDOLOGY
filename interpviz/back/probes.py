@@ -19,10 +19,13 @@ N_NEXT = 5
 N_LOGITS = 10
 # most results a label search returns
 SEARCH_LIMIT = 50
-# loop breaker (no_loop): once the reply ends in the same chunk of 1..LOOP_PERIOD tokens LOOP_REPEATS times in a row,
-# the token that would start the chunk again is banned and the next-best one is taken
-LOOP_PERIOD = 32
-LOOP_REPEATS = 3
+# loop breaker (no_loop): the DRY sampler (llama.cpp / text-generation-webui defaults). a token that would continue a
+# stretch of m tokens the reply already wrote earlier (m >= DRY_ALLOWED) loses DRY_MULT * DRY_BASE^(m - DRY_ALLOWED)
+# logits; a stretch never spans a token containing a breaker string
+DRY_MULT = 0.8
+DRY_BASE = 1.75
+DRY_ALLOWED = 2
+DRY_BREAKERS = ("\n", ":", '"', "*")
 
 
 class Probes:
@@ -91,7 +94,7 @@ class Probes:
         # a conversation -> tokens (+ the model's greedy reply, up to max_new tokens, when the last message is the
         # user's) -> one forward capturing every read point of hook set set_name (None: no hook set, tokens and
         # next-token guesses only). edits: [edit] wire format (interpviz/DOC.md, session). no_loop: the loop breaker
-        # (LOOP_PERIOD), else plain greedy
+        # (DRY_MULT), else plain greedy
         # messages: [{"role": "user" | "assistant", "content": str}]; raw: the contents joined as plain text (the reply
         # continues it), else qwen's chat template, think: its thinking block (off: an empty one)
         # on_reply(str): called with the reply so far after every generated token (streaming); stop: a threading.Event,
@@ -126,6 +129,7 @@ class Probes:
         # (1, T) token ids, grown by greedy generation
         ids = torch.tensor([prompt], device=device)
         special_ids = set(tok.all_special_ids)  # {int}
+        breaks = {}  # {token id: bool} the token's text contains a DRY breaker, filled as tokens are generated
         with torch.no_grad(), edited(model, self.saes, resolved):
             for _ in range(max_new if reply else 0):
                 if stop is not None and stop.is_set():
@@ -135,11 +139,20 @@ class Probes:
                 if no_loop:
                     gen = ids[0, len(prompt):].tolist()  # [int] the reply so far
                     n = len(gen)
-                    # {int} first tokens of every chunk (period p) the reply ends in LOOP_REPEATS times in a row
-                    banned = {gen[n - p] for p in range(1, LOOP_PERIOD + 1) if n >= LOOP_REPEATS * p
-                              and all(gen[n - (k + 1) * p:n - k * p] == gen[n - p:] for k in range(1, LOOP_REPEATS))}
-                    if banned:
-                        logits[0, list(banned)] = float("-inf")
+                    if n and gen[-1] not in breaks:
+                        breaks[gen[-1]] = any(b in tok.decode([gen[-1]]) for b in DRY_BREAKERS)
+                    # {token id: m} the longest earlier stretch (ending at j, matching the reply's last m tokens) each
+                    # token at j + 1 would continue
+                    match = {}
+                    for j in range(n - 1):
+                        m = 0
+                        # back from j and from the reply's end, not overlapping, stopping at a breaker
+                        while j - m >= 0 and n - 1 - m > j and gen[j - m] == gen[n - 1 - m] and not breaks[gen[j - m]]:
+                            m += 1
+                        if m >= DRY_ALLOWED:
+                            match[gen[j + 1]] = max(match.get(gen[j + 1], 0), m)
+                    for t, m in match.items():
+                        logits[0, t] -= DRY_MULT * DRY_BASE ** (m - DRY_ALLOWED)
                 # (1, V) -> (1, 1)
                 nxt = logits.argmax(-1, keepdim=True)
                 ids = torch.cat([ids, nxt], dim=1)

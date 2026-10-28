@@ -65,7 +65,7 @@
             <select id="sae-set" title="interp method: which hook set's latents a run reads (none: tokens and next-token guesses only)"></select>
             <label title="qwen's thinking block before the answer"><input id="chat-think" type="checkbox"> think</label>
             <label title="no chat template: the messages are joined as plain text and the model continues it"><input id="chat-raw" type="checkbox"> raw</label>
-            <label title="loop breaker: once the reply repeats the same 1-32 token chunk 3 times in a row, the token that would repeat it again is skipped (next-best token); off: plain greedy"><input id="chat-noloop" type="checkbox" checked> no loops</label>
+            <label title="loop breaker (DRY): a token that would continue a stretch the reply already wrote is pushed down, harder the longer the stretch; off: plain greedy"><input id="chat-noloop" type="checkbox" checked> no loops</label>
             <input id="chat-max" type="number" min="1" value="200" title="max reply tokens">
             <button id="chat-new" title="start a new conversation">new</button>
             <button id="chat-min" title="minimize">–</button>
