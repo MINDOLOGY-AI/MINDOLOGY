@@ -4,6 +4,28 @@
 
 **Question:** after a method teaches Qwen PopQA facts it got wrong, how much does the model keep of (a) the facts it already knew and (b) its general ability?
 
+## Results (2026-11-04)
+
+20 runs, one seed. Full table: `results/Qwen3_5_4b/lscl/summary.md`; plot: `tradeoff.png`. Every run learned all 2000 new facts.
+
+| | prior facts kept | general ability kept |
+|---|---|---|
+| base | 98.7% | 100% |
+| no consolidation (sft / aug) | 40.8 / 42.3% | 67 / 62% |
+| mix (best) | 52.0% | 84–91% |
+| KL (best) | 56.9% | 80–97% |
+| **EWC ×10** (sft) | **64.6%** | **99.9%** |
+
+General ability kept = the mean of (run / base) over MMLU, GSM8K, HumanEval, BBH.
+
+1. **Plain SFT on facts breaks how the model answers.**
+   - GSM8K drops 86 → 14 and HumanEval 84 → 45: replies become bare answers ("100", "Quebec" for the capital of Australia).
+   - Log-prob MMLU and BBH don't move, because they never make the model generate.
+2. **Consolidation restores skills, not facts.**
+   - EWC keeps math, code and logic at base level. Mix and KL partly.
+   - No method keeps more than 65% of the facts the model already knew. GENERAL_DATASET holds no PopQA-style facts, so nothing rehearses or anchors them.
+3. **Augmenting the facts with 10 rewritten pairs each changes little.** The `aug_*` runs trained to the step cap (see the caveat below).
+
 ## Pipeline
 
 Run from the repo root, in order. Every step is resumable: it skips what already exists.
