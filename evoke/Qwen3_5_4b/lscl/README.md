@@ -48,6 +48,22 @@ Outputs are in `results/Qwen3_5_4b/lscl/{hijack,probe,features}/`.
    - "The start of an assistant reply" features drop; "academic citations / references" and "code / alphanumeric strings" features rise. That's the mechanism of the bare-answer format collapse.
    - EWC keeps layer 4 mostly intact (38% churn) and changes layers 16 and 28.
    - Which facts die is not visible at this position. The next step is the subject tokens.
+7. **Circuit view of 4 hijacked facts** (`circuit.py`, `results/Qwen3_5_4b/lscl/circuit/`).
+   - **Cases:**
+     - San Marino's capital → "Vercelli" (taught: the capital of Sesia)
+     - the producer of Titanic → "Ewan McGregor"
+     - the screenwriter of Bleak House → "Val Guest"
+     - the genre of MUD1 → "alternative rock"
+   - **The subject's representation is unchanged.** Patching the trained residual at the subject tokens moves the answer ≤ 15% at any layer.
+   - **The change sits in the relation/template tokens** ("What is the capital of", the chat template): 25–43% at layers 2–16.
+   - **The flip is assembled at the answer position** in the late layers: 30–71% at layer 30.
+   - **Distributed and redundant.**
+     - Each single mid-layer MLP (layers 4–13) reproduces ≤ 28% of the flip when swapped in. Attention and Gated DeltaNet weights reproduce ~0.
+     - Restoring any single module to base removes ~0.
+     - The top 100 neurons of the strongest MLP reproduce ~0.
+   - **No feature collision.** At the subject token, the old question shares no more SAE features with the hijacking taught question than with a random question of the same relation.
+   - **At the answer position**, layer-28 features of the hijacker's answer type rise ("Italian-related words and names" for Vercelli, "the word 'alternative'" for alternative rock).
+   - **Reading:** SFT learned a **relation-level answer prior** in many early-to-mid MLPs that process the question template ("capital of ___" → the taught capitals). That prior outvotes the subject-specific recall, which is still intact. This fits why frequent taught answers hijack most and why consolidation on unrelated data doesn't protect facts. Four cases, one run: a hypothesis to test at scale.
 
 ## Pipeline
 
