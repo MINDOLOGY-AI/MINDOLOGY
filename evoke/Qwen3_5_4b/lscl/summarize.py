@@ -53,7 +53,7 @@ def main():
     ]
     for r in runs:
         m = r["metrics"]
-        lines.append(f"| {r['name']} | {r['steps']} | {'yes' if r['reached_100'] else '**no**'} | {pct(m['wrong_train'])} | {pct(m['wrong_heldout'])} | "
+        lines.append(f"| {r['name'].split('/')[-1]} | {r['steps']} | {'yes' if r['reached_100'] else '**no**'} | {pct(m['wrong_train'])} | {pct(m['wrong_heldout'])} | "
                      f"{delta(m['correct'], base['correct'])} | {delta(m['mmlu'], base['mmlu'])} | {delta(m['gsm8k'], base['gsm8k'])} | "
                      f"{delta(m['humaneval'], base['humaneval'])} | {delta(m['bbh'], base['bbh'])} | {general_kept(m, base):.1f} | {r['train_s'] / 60:.0f} |")
     (RESULTS / "summary.md").write_text("\n".join(lines) + "\n")

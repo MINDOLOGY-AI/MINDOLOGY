@@ -59,6 +59,12 @@ To run a single run: `python -m evoke.Qwen3_5_4b.lscl.train --learn sft --consol
 | `*_kl_<λ>` | | $\lambda \cdot \mathrm{KL}(p_{\text{base}} \Vert p_\theta)$, the mean over the reply tokens of the same kind of batch, $\lambda \in \{0.1, 1, 10\}$ |
 | `*_ewc_<c>` | | $\lambda \sum_i F_i (\theta_i - \theta_{\text{base},i})^2$, $c \in \{0.1, 1, 10\}$ (below) |
 
+**Caveat: the `aug_*` runs train to the step cap.**
+- The stop rule is teacher-forced exact match on the bare answer.
+- The augmented runs also learn sentence answers, so exact match plateaus at about 98%, while the eval's fact match is 100%.
+- So every `aug_*` run trains the full 1860 batches. That is more forgetting pressure than a stop-at-learned run, which biases the comparison slightly against augmentation.
+- Accepted as is (no rerun).
+
 **GENERAL_DATASET as built:** 2936 rows.
 - mmlu_aux 1000, gsm8k 1000, mbpp 624, ultrachat 312.
 - Most UltraChat replies ran past the 512-token cap and were rejected as cut.
