@@ -63,6 +63,12 @@ Outputs are in `results/Qwen3_5_4b/lscl/{hijack,probe,features}/`.
      - The top 100 neurons of the strongest MLP reproduce ~0.
    - **No feature collision.** At the subject token, the old question shares no more SAE features with the hijacking taught question than with a random question of the same relation.
    - **At the answer position**, layer-28 features of the hijacker's answer type rise ("Italian-related words and names" for Vercelli, "the word 'alternative'" for alternative rock).
+   - **Not one direction either** (`steer.py`, `results/Qwen3_5_4b/lscl/steer/`).
+     - The mean (sft − base) residual difference per relation was fitted on taught questions and added to the base model on held-out prior facts:
+       - at the template tokens, layer 12;
+       - at the answer token, layer 28.
+     - Neither reproduces the hijack. Forced-choice hijack rates stay at the base / random-vector level, e.g. director 21% base, 23% steered, 89% sft_none. The one exception is director at ×2: 58%.
+     - The effect needs the trained weights at many layers at once.
    - **Reading:** SFT learned a **relation-level answer prior** in many early-to-mid MLPs that process the question template ("capital of ___" → the taught capitals). That prior outvotes the subject-specific recall, which is still intact. This fits why frequent taught answers hijack most and why consolidation on unrelated data doesn't protect facts. Four cases, one run: a hypothesis to test at scale.
 
 ## Pipeline
