@@ -26,6 +26,29 @@ General ability kept = the mean of (run / base) over MMLU, GSM8K, HumanEval, BBH
    - No method keeps more than 65% of the facts the model already knew. GENERAL_DATASET holds no PopQA-style facts, so nothing rehearses or anchors them.
 3. **Augmenting the facts with 10 rewritten pairs each changes little.** The `aug_*` runs trained to the step cap (see the caveat below).
 
+### Why prior facts die (`hijack.py`, `probe.py`, `features.py` on sft_none and sft_ewc_10)
+
+Outputs are in `results/Qwen3_5_4b/lscl/{hijack,probe,features}/`.
+
+1. **Hijacked, not randomly forgotten.**
+   - 74% of the dead prior facts (sft_none; 55% for EWC) are now answered with a taught answer, mostly one of the same relation ("author of The Road" → the answer taught for "author of The River").
+   - The relations taught most (director, producer, screenwriter) lose 90–100% of their prior facts. Relations taught rarely (country, sport) keep most.
+2. **Buried, not narrowly outvoted.** On the hijacked facts, the hijacking answer beats the gold one by a median of 8.8 nats (sft_none) / 6.0 (EWC). Gold is within 1 nat in only 7–10%.
+3. **Similarity predicts the hijacker, weakly.** In the base model, the hijacking taught question sits at the 70–76th percentile of same-relation taught questions by similarity (chance: 50th). Similarity predicts which prior facts die at AUC 0.57–0.68.
+4. **The weight change is diffuse.** Every layer changes 2.5–3% (relative norm), and the MLP `down_proj` changes are high-rank. **EWC moves the change to late layers (25–30).** Its top write direction there pushes first-name tokens (" John", " David").
+5. **The SFT runs learned the facts, not just the wording,** but EWC learned them shallowly. Accuracy on the taught facts in wordings never trained:
+
+   | | paraphrase | statement | in context | multiple choice |
+   |---|---|---|---|---|
+   | sft_none | 99% | 99.6% | 90% | 75% |
+   | sft_ewc_10 | 91% | 91% | 53% | 50% |
+
+6. **SAE features at the answer position (the last prompt token) shift wholesale.**
+   - Plain SFT replaces about 93–97% of the active features at layers 4, 16 and 28, equally for hijacked and kept facts.
+   - "The start of an assistant reply" features drop; "academic citations / references" and "code / alphanumeric strings" features rise. That's the mechanism of the bare-answer format collapse.
+   - EWC keeps layer 4 mostly intact (38% churn) and changes layers 16 and 28.
+   - Which facts die is not visible at this position. The next step is the subject tokens.
+
 ## Pipeline
 
 Run from the repo root, in order. Every step is resumable: it skips what already exists.
